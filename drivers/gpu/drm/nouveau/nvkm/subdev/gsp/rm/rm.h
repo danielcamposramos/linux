@@ -8,6 +8,8 @@
 #include "handles.h"
 struct nvkm_ior;
 struct nvkm_outp;
+struct nvkm_disp_imp_head;
+struct nvkm_disp_imp_result;
 struct r535_gr;
 
 struct nvkm_rm_impl {
@@ -85,6 +87,9 @@ struct nvkm_rm_api {
 
 	const struct nvkm_rm_api_disp {
 		int (*get_static_info)(struct nvkm_disp *);
+		int (*imp_check)(struct nvkm_disp *, u8 num_heads, bool tiled,
+				 const struct nvkm_disp_imp_head *,
+				 struct nvkm_disp_imp_result *);
 		int (*get_supported)(struct nvkm_disp *, unsigned long *display_mask);
 		int (*get_connect_state)(struct nvkm_disp *, unsigned display_id);
 		int (*get_active)(struct nvkm_disp *, unsigned head, u32 *display_id);

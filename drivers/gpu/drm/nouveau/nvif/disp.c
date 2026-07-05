@@ -81,3 +81,18 @@ nvif_disp_ctor(struct nvif_device *device, const char *name, s32 oclass, struct 
 	disp->head_mask = args.head_mask;
 	return 0;
 }
+
+int
+nvif_disp_imp_check(struct nvif_disp *disp, struct nvif_disp_imp_check_v0 *args)
+{
+	int ret;
+
+	args->version = 0;
+
+	ret = nvif_mthd(&disp->object, NVIF_DISP_V0_IMP_CHECK, args, sizeof(*args));
+	/* -ENODEV is the expected result on firmware without the API. */
+	NVIF_ERRON(ret && ret != -ENODEV, &disp->object,
+		   "[IMP_CHECK heads:%d] possible:%d ret:%d",
+		   args->num_heads, args->possible, ret);
+	return ret;
+}

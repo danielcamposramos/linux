@@ -12,5 +12,8 @@ struct nvif_disp {
 
 int nvif_disp_ctor(struct nvif_device *, const char *name, s32 oclass,
 		   struct nvif_disp *);
+
+struct nvif_disp_imp_check_v0;
+int nvif_disp_imp_check(struct nvif_disp *, struct nvif_disp_imp_check_v0 *);
 void nvif_disp_dtor(struct nvif_disp *);
 #endif

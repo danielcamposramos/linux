@@ -28,6 +28,83 @@
 #include <nvif/if0010.h>
 
 static int
+nvkm_udisp_mthd_imp_check(struct nvkm_disp *disp, void *argv, u32 argc)
+{
+	union nvif_disp_imp_check_args *args = argv;
+	struct nvkm_disp_imp_head heads[8];
+	struct nvkm_disp_imp_result result;
+	u32 seen = 0;
+	int ret, i;
+
+	if (argc != sizeof(args->v0) || args->v0.version != 0)
+		return -ENOSYS;
+	if (!disp->imp_check)
+		return -ENODEV;
+	if (args->v0.num_heads > ARRAY_SIZE(heads))
+		return -EINVAL;
+
+	for (i = 0; i < args->v0.num_heads; i++) {
+		if (args->v0.head[i].index >= ARRAY_SIZE(result.head) ||
+		    seen & BIT(args->v0.head[i].index))
+			return -EINVAL;
+		seen |= BIT(args->v0.head[i].index);
+
+		heads[i].index = args->v0.head[i].index;
+		heads[i].vtaps = args->v0.head[i].vtaps;
+		heads[i].tile_mask = args->v0.head[i].tile_mask;
+		heads[i].pclk_khz = args->v0.head[i].pclk_khz;
+		heads[i].htotal = args->v0.head[i].htotal;
+		heads[i].vtotal = args->v0.head[i].vtotal;
+		heads[i].hblanks = args->v0.head[i].hblanks;
+		heads[i].hblanke = args->v0.head[i].hblanke;
+		heads[i].vblanks = args->v0.head[i].vblanks;
+		heads[i].vblanke = args->v0.head[i].vblanke;
+		heads[i].in_w = args->v0.head[i].in_w;
+		heads[i].in_h = args->v0.head[i].in_h;
+		heads[i].out_w = args->v0.head[i].out_w;
+		heads[i].out_h = args->v0.head[i].out_h;
+		heads[i].dsc_enable = args->v0.head[i].dsc_enable;
+		heads[i].dsc_bpp_x16 = args->v0.head[i].dsc_bpp_x16;
+		heads[i].dsc_slice_mask = args->v0.head[i].dsc_slice_mask;
+		heads[i].wndw_formats[0] = args->v0.head[i].wndw_formats[0] &
+					   NVIF_DISP_IMP_FORMAT_ALL;
+		heads[i].wndw_formats[1] = args->v0.head[i].wndw_formats[1] &
+					   NVIF_DISP_IMP_FORMAT_ALL;
+	}
+
+	ret = disp->imp_check(disp, args->v0.num_heads, args->v0.tiled, heads,
+			      &result);
+	if (ret)
+		return ret;
+
+	args->v0.possible = result.possible;
+	for (i = 0; i < args->v0.num_heads; i++) {
+		const u8 index = args->v0.head[i].index;
+
+		args->v0.head[i].required_tiles =
+			result.head[index].required_tiles;
+		args->v0.head[i].dsc_slices = result.head[index].dsc_slices;
+	}
+
+	return 0;
+}
+
+static int
+nvkm_udisp_mthd(struct nvkm_object *object, u32 mthd, void *argv, u32 argc)
+{
+	struct nvkm_disp *disp = nvkm_udisp(object);
+
+	switch (mthd) {
+	case NVIF_DISP_V0_IMP_CHECK:
+		return nvkm_udisp_mthd_imp_check(disp, argv, argc);
+	default:
+		break;
+	}
+
+	return -EINVAL;
+}
+
+static int
 nvkm_udisp_sclass(struct nvkm_object *object, int index, struct nvkm_oclass *sclass)
 {
 	struct nvkm_disp *disp = nvkm_udisp(object);
@@ -74,6 +151,7 @@ nvkm_udisp_dtor(struct nvkm_object *object)
 static const struct nvkm_object_func
 nvkm_udisp = {
 	.dtor = nvkm_udisp_dtor,
+	.mthd = nvkm_udisp_mthd,
 	.sclass = nvkm_udisp_sclass,
 };
 

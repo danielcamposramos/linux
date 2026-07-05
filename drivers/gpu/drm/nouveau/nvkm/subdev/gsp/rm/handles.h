@@ -12,6 +12,7 @@
 #define NVKM_RM_DEVICE              0xde1d0000
 #define NVKM_RM_SUBDEVICE           0x5d1d0000
 #define NVKM_RM_DISP                0x00730000
+#define NVKM_RM_DISP_SW             0xc3720000
 #define NVKM_RM_VASPACE             0x90f10000
 #define NVKM_RM_CHAN(chid)         (0xf1f00000 | (chid))
 #define NVKM_RM_THREED              0x97000000

@@ -1406,6 +1406,9 @@ r535_disp_fini(struct nvkm_disp *disp, bool suspend)
 	if (!disp->engine.subdev.use.enabled)
 		return;
 
+	mutex_lock(&disp->rm.imp_mutex);
+	nvkm_gsp_rm_free(&disp->rm.c372);
+	mutex_unlock(&disp->rm.imp_mutex);
 	nvkm_gsp_rm_free(&disp->rm.object);
 
 	if (!suspend) {
@@ -1508,6 +1511,9 @@ r535_disp_oneinit(struct nvkm_disp *disp)
 				&disp->rm.objcom);
 	if (ret)
 		return ret;
+
+	disp->imp_check = rmapi->disp->imp_check;
+	mutex_init(&disp->rm.imp_mutex);
 
 	ret = rmapi->disp->get_static_info(disp);
 	if (ret)

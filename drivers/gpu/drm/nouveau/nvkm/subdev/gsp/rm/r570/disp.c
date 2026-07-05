@@ -200,6 +200,230 @@ r570_dp_get_caps(struct nvkm_disp *disp, int *plink_bw, bool *pmst, bool *pwm)
 	return 0;
 }
 
+/* Validate the supplied head configuration with RM and extract per-head
+ * tile requirements. Windows follow nouveau's fixed two-per-head assignment
+ * with format bounds supplied by the caller.
+ */
+static int
+r570_disp_imp_check_locked(struct nvkm_disp *disp, u8 num_heads, bool tiled,
+			   const struct nvkm_disp_imp_head *heads,
+			   struct nvkm_disp_imp_result *result)
+{
+	NVC372_CTRL_IS_MODE_POSSIBLE_PARAMS *ctrl;
+	int ret = 0, i, w;
+
+	memset(result, 0, sizeof(*result));
+
+	if (num_heads > ARRAY_SIZE(result->head))
+		return -EINVAL;
+
+	/* An empty configuration does not need resources or tiling assignment, so
+	 * return possible without an RM query like NVKMS does.
+	 */
+	if (!num_heads) {
+		result->possible = true;
+		return 0;
+	}
+
+	for (i = 0; i < num_heads; i++) {
+		if (heads[i].index >= ARRAY_SIZE(result->head))
+			return -EINVAL;
+	}
+
+	if (!disp->rm.c372.client) {
+		ret = nvkm_gsp_rm_alloc(&disp->rm.device.object, NVKM_RM_DISP_SW,
+					NVC372_DISPLAY_SW, 0, &disp->rm.c372);
+		if (ret) {
+			memset(&disp->rm.c372, 0, sizeof(disp->rm.c372));
+			return ret;
+		}
+	}
+
+	ctrl = nvkm_gsp_rm_ctrl_get(&disp->rm.c372,
+				    NVC372_CTRL_CMD_IS_MODE_POSSIBLE, sizeof(*ctrl));
+	if (IS_ERR(ctrl))
+		return PTR_ERR(ctrl);
+
+	memset(ctrl, 0, sizeof(*ctrl));
+
+	for (i = 0; i < num_heads; i++) {
+		const struct nvkm_disp_imp_head *head = &heads[i];
+		NVC372_CTRL_IMP_HEAD *imph = &ctrl->head[ctrl->numHeads++];
+		const u16 hactive = head->hblanks - head->hblanke;
+		const u16 vactive = head->vblanks - head->vblanke;
+		/* Aspect scaling can round the output height above the active raster,
+		 * so clamp it here to keep the overscan subtraction from underflowing.
+		 */
+		const u16 idle_h = min_t(u16, head->out_h, vactive);
+		u32 leading, overscan;
+
+		imph->headIndex = head->index;
+		imph->maxPixelClkKHz = head->pclk_khz;
+		imph->rasterSize.width = head->htotal;
+		imph->rasterSize.height = head->vtotal;
+		imph->rasterBlankStart.X = head->hblanks;
+		imph->rasterBlankStart.Y = head->vblanks;
+		imph->rasterBlankEnd.X = head->hblanke;
+		imph->rasterBlankEnd.Y = head->vblanke;
+
+		imph->control.masterLockMode = NV_DISP_LOCK_MODE_NO_LOCK;
+		imph->control.masterLockPin = NV_DISP_LOCK_PIN_UNSPECIFIED;
+		imph->control.slaveLockMode = NV_DISP_LOCK_MODE_NO_LOCK;
+		imph->control.slaveLockPin = NV_DISP_LOCK_PIN_UNSPECIFIED;
+
+		/* Use the caller's validated ratios and assigned taps so IMP models the
+		 * scaler configuration that will be programmed. Downscale factors are
+		 * input/output ratios multiplied by 0x400.
+		 */
+		imph->maxDownscaleFactorH = head->out_w && head->in_w > head->out_w ?
+			DIV_ROUND_UP(head->in_w * 0x400, head->out_w) : 0x400;
+		imph->maxDownscaleFactorV = head->out_h && head->in_h > head->out_h ?
+			DIV_ROUND_UP(head->in_h * 0x400, head->out_h) : 0x400;
+		imph->outputScalerVerticalTaps = head->vtaps ? head->vtaps : 2;
+		imph->bUpscalingAllowedV = head->out_h > head->in_h;
+
+		/* Include the overscan borders in the frame-idle counts, matching
+		 * nvComputeMinFrameIdle(). nouveau centers the output viewport, so its
+		 * yAdjust term is zero.
+		 */
+		overscan = vactive / 2 - idle_h / 2;
+		leading = head->vblanke + overscan + 1;
+		if (leading < 2 || leading + idle_h > head->vtotal) {
+			/* Vsync and back porch each need a line, and the trailing count must
+			 * not underflow. Invalid timings make the mode impossible without
+			 * constituting an RM control error.
+			 */
+			nvkm_gsp_rm_ctrl_done(&disp->rm.c372, ctrl);
+			return 0;
+		}
+		imph->minFrameIdle.leadingRasterLines = leading;
+		imph->minFrameIdle.trailingRasterLines = head->vtotal -
+			(leading + idle_h);
+
+		imph->lut = NVC372_CTRL_IMP_LUT_USAGE_1025;
+		imph->cursorSize32p = 256 / 32;
+
+		imph->bEnableDsc = head->dsc_enable;
+		/* Pass the slice mask on all GPUs, as NVKMS does. On tiled GPUs the
+		 * control definition also requires target bpp and slice width, so fill
+		 * both even though NVKMS leaves target bpp unset.
+		 */
+		if (head->dsc_enable) {
+			u32 min_slices = ffs(head->dsc_slice_mask);
+
+			if (tiled && !min_slices) {
+				/* Tiled DSC requires at least one allowed slice count. */
+				nvkm_gsp_rm_ctrl_done(&disp->rm.c372, ctrl);
+				return 0;
+			}
+			imph->possibleDscSliceCountMask = head->dsc_slice_mask;
+			if (tiled) {
+				imph->dscTargetBppX16 = head->dsc_bpp_x16;
+				imph->maxDscSliceWidth = min_slices < hactive ?
+					DIV_ROUND_UP(hactive, min_slices) : hactive;
+			}
+		}
+
+		/* A nonzero mask constrains IMP to the caller's assignment, so
+		 * IMP must fail if those tiles are insufficient. Zero lets IMP
+		 * choose the tile count.
+		 */
+		imph->tileMask = head->tile_mask;
+
+		for (w = 0; w < 2; w++) {
+			NVC372_CTRL_IMP_WINDOW *impw;
+
+			/* Omit windows with no allowed formats. */
+			if (!head->wndw_formats[w])
+				continue;
+
+			impw = &ctrl->window[ctrl->numWindows++];
+			impw->windowIndex = head->index * 2 + w;
+			impw->owningHead = head->index;
+			/* Window scaling is fixed at 1:1 with two taps, so only
+			 * the format bound comes from the caller. The fetch
+			 * bound follows the input width.
+			 */
+			impw->formatUsageBound = head->wndw_formats[w];
+			impw->maxPixelsFetchedPerLine =
+				(((head->in_w + 14) * 0x400 + 1023) >> 10) + 8;
+			impw->maxDownscaleFactorH = 0x400;
+			impw->maxDownscaleFactorV = 0x400;
+			impw->inputScalerVerticalTaps = 2;
+			impw->bUpscalingAllowedV = false;
+			impw->lut = NVC372_CTRL_IMP_LUT_USAGE_1025;
+			impw->tmoLut = NVC372_CTRL_IMP_LUT_USAGE_1025;
+		}
+	}
+
+	ret = nvkm_gsp_rm_ctrl_push(&disp->rm.c372, &ctrl, sizeof(*ctrl));
+	if (ret) {
+		nvkm_gsp_rm_ctrl_done(&disp->rm.c372, ctrl);
+		return ret;
+	}
+
+	/* Tiled GPUs need an assignment to implement a possible mode, while
+	 * earlier GPUs report feasibility through bIsPossible alone.
+	 */
+	result->possible = ctrl->bIsPossible && (!tiled || ctrl->numTilingAssignments);
+
+	/* The first assignment gives the required tiles. Later assignments only
+	 * reduce dispclk, so use the first like NVKMS. Each tileList entry
+	 * indexes ctrl->head and supplies that head's DSC slice count.
+	 */
+	if (result->possible) {
+		const u32 tiles = min_t(u32, ctrl->tilingAssignments[0].numTiles,
+					ARRAY_SIZE(ctrl->tileList));
+
+		for (i = 0; i < tiles; i++) {
+			const NVC372_TILE_ENTRY *entry = &ctrl->tileList[i];
+			u8 head;
+
+			if (entry->head >= ctrl->numHeads) {
+				result->possible = false;
+				break;
+			}
+
+			head = ctrl->head[entry->head].headIndex;
+			if (head >= ARRAY_SIZE(result->head)) {
+				result->possible = false;
+				break;
+			}
+
+			/* Entries for a head should agree on the DSC slice count, so keep the
+			 * first entry's value like NVKMS.
+			 */
+			if (!result->head[head].required_tiles) {
+				result->head[head].dsc_slices =
+					entry->headDscSlices;
+			}
+			result->head[head].required_tiles++;
+		}
+
+		/* Each active head requires at least one tile. */
+		for (i = 0; i < num_heads && tiled; i++) {
+			if (!result->head[heads[i].index].required_tiles)
+				result->possible = false;
+		}
+	}
+
+	nvkm_gsp_rm_ctrl_done(&disp->rm.c372, ctrl);
+	return 0;
+}
+
+static int
+r570_disp_imp_check(struct nvkm_disp *disp, u8 num_heads, bool tiled,
+		    const struct nvkm_disp_imp_head *heads,
+		    struct nvkm_disp_imp_result *result)
+{
+	int ret;
+
+	mutex_lock(&disp->rm.imp_mutex);
+	ret = r570_disp_imp_check_locked(disp, num_heads, tiled, heads, result);
+	mutex_unlock(&disp->rm.imp_mutex);
+	return ret;
+}
+
 static int
 r570_bl_ctrl(struct nvkm_disp *disp, unsigned display_id, bool set, int *pval)
 {
@@ -304,12 +528,22 @@ r570_disp_get_static_info(struct nvkm_disp *disp)
 	disp->wndw.nr = fls(disp->wndw.mask);
 
 	nvkm_gsp_rm_ctrl_done(&gsp->internal.device.subdevice, ctrl);
+
+	/* Create the IMP object here to avoid RM object allocation during normal
+	 * atomic checks. The query path retries if allocation fails or fini frees
+	 * the object, as happens across suspend/resume.
+	 */
+	if (nvkm_gsp_rm_alloc(&disp->rm.device.object, NVKM_RM_DISP_SW,
+			      NVC372_DISPLAY_SW, 0, &disp->rm.c372))
+		memset(&disp->rm.c372, 0, sizeof(disp->rm.c372));
+
 	return 0;
 }
 
 const struct nvkm_rm_api_disp
 r570_disp = {
 	.get_static_info = r570_disp_get_static_info,
+	.imp_check = r570_disp_imp_check,
 	.get_supported = r570_disp_get_supported,
 	.get_connect_state = r570_disp_get_connect_state,
 	.get_active = r570_disp_get_active,
