@@ -14,6 +14,19 @@ struct nv50_disp {
 	struct nv50_core *core;
 	struct nvif_object caps;
 
+	/* GB20x tile/phywin capabilities, zero on earlier hardware. type0_tiles
+	 * identifies tiles with both an output scaler and vertical filter.
+	 */
+	struct {
+		u8 nr_tiles;
+		u8 nr_phywins;
+		u8 tiles;          /* mask: existing tiles */
+		u8 multi_tiles;    /* mask: multi-tile capable tiles */
+		u8 type0_tiles;    /* mask: TYPE_0 tiles */
+		u32 phywins;       /* mask: existing phywins */
+		u32 multi_phywins; /* mask: multi-tile capable phywins */
+	} tile;
+
 	/* Turing+ output scaler limits, zero for heads without a scaler.
 	 * Downscale factors are input/output * 0x400, while max_pixels limits
 	 * the width of vertical filtering at each tap count.

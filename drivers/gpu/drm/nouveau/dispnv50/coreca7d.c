@@ -9,8 +9,69 @@
 #include <nvif/pushc97b.h>
 
 #include <nvhw/class/clca7d.h>
+#include <nvhw/class/clca73.h>
+#include <nvhw/drf.h>
 
 #include <nouveau_bo.h>
+
+static int
+coreca7d_caps_init(struct nouveau_drm *drm, struct nv50_disp *disp)
+{
+	u32 syscapc, capb, capf;
+	int i, ret;
+
+	ret = corec57d_caps_init(drm, disp);
+	if (ret)
+		return ret;
+
+	/* TYPE_0 tiles retain both the output scaler and vertical filter, so
+	 * record them separately from tiles that lack either feature.
+	 */
+	syscapc = nvif_rd32(&disp->caps, NVCA73_SYS_CAPC);
+	capb = nvif_rd32(&disp->caps, NVCA73_SYS_CAPB);
+	capf = nvif_rd32(&disp->caps, NVCA73_IHUB_COMMON_CAPF);
+
+	for (i = 0; i < NVCA73_SYS_CAPC_TILE_EXISTS__SIZE_1; i++) {
+		u32 capa;
+
+		if (!NVDEF_TEST(syscapc, NVCA73, SYS_CAPC, TILE_EXISTS, i, ==, YES))
+			continue;
+
+		disp->tile.tiles |= BIT(i);
+		disp->tile.nr_tiles++;
+
+		if (NVDEF_TEST(syscapc, NVCA73, SYS_CAPC,
+			       TILE_SUPPORT_MULTI_TILE, i, ==, YES))
+			disp->tile.multi_tiles |= BIT(i);
+
+		capa = nvif_rd32(&disp->caps, NVCA73_POSTCOMP_HDR_CAPA(i));
+		if (NVDEF_TEST(capa, NVCA73, POSTCOMP_HDR_CAPA, SCLR_PRESENT, ==, TRUE) &&
+		    NVDEF_TEST(capa, NVCA73, POSTCOMP_HDR_CAPA, VFILTER_PRESENT, ==, TRUE))
+			disp->tile.type0_tiles |= BIT(i);
+	}
+
+	/* GB20x has equal numbers of logical and physical windows, so derive
+	 * phywin availability from the window-exists bits. Keep the mask to
+	 * avoid requiring contiguous IDs.
+	 */
+	for (i = 0; i < NVCA73_SYS_CAPB_WINDOW_EXISTS__SIZE_1; i++) {
+		if (!NVDEF_TEST(capb, NVCA73, SYS_CAPB, WINDOW_EXISTS, i, ==, YES))
+			continue;
+		disp->tile.phywins |= BIT(i);
+		disp->tile.nr_phywins++;
+	}
+	for (i = 0; i < NVCA73_IHUB_COMMON_CAPF_PHYWIN_SUPPORT_MULTI_TILE__SIZE_1; i++) {
+		if (NVDEF_TEST(capf, NVCA73, IHUB_COMMON_CAPF,
+			       PHYWIN_SUPPORT_MULTI_TILE, i, ==, YES))
+			disp->tile.multi_phywins |= BIT(i);
+	}
+
+	NV_DEBUG(drm, "disp: tiles %02x (multi %02x, type0 %02x), phywins %08x (multi %08x)\n",
+		 disp->tile.tiles, disp->tile.multi_tiles,
+		 disp->tile.type0_tiles, disp->tile.phywins,
+		 disp->tile.multi_phywins);
+	return 0;
+}
 
 static int
 coreca7d_update(struct nv50_core *core, u32 *interlock, bool ntfy)
@@ -123,7 +184,7 @@ static const struct nv50_core_func
 coreca7d = {
 	.init = coreca7d_init,
 	.ntfy_init = corec37d_ntfy_init,
-	.caps_init = corec57d_caps_init,
+	.caps_init = coreca7d_caps_init,
 	.caps_class = GB202_DISP_CAPS,
 	.ntfy_wait_done = corec37d_ntfy_wait_done,
 	.update = coreca7d_update,
