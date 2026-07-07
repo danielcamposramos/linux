@@ -22,6 +22,7 @@ struct nv50_head {
 };
 
 struct nv50_head *nv50_head_create(struct drm_device *, int index);
+void nv50_head_mode_from_drm(struct drm_display_mode *, struct nv50_head_mode *);
 void nv50_head_flush_set(struct nv50_head *head, struct nv50_head_atom *asyh);
 void nv50_head_flush_set_wndw(struct nv50_head *head, struct nv50_head_atom *asyh);
 void nv50_head_flush_clr(struct nv50_head *head,

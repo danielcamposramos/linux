@@ -805,8 +805,107 @@ nv50_audio_enable(struct drm_encoder *encoder, struct nouveau_crtc *nv_crtc,
 }
 
 /******************************************************************************
+ * IMP
+ *****************************************************************************/
+
+/* Probe modes with one head so existing displays do not constrain the
+ * advertised mode list. Atomic check validates the combined configuration.
+ */
+enum drm_mode_status
+nv50_imp_mode_valid(struct drm_connector *connector,
+		    const struct drm_display_mode *mode)
+{
+	struct drm_device *dev = connector->dev;
+	struct nv50_disp *disp = nv50_disp(dev);
+	struct nvif_disp_imp_check_v0 imp = {};
+	struct nvif_disp_imp_check_head_v0 *imph = &imp.head[0];
+	struct drm_display_mode adjusted;
+	struct nv50_head_mode m = {};
+	int probe_head, ret;
+
+	/* Reject interlaced modes even when IMP is bypassed, matching the
+	 * atomic check.
+	 */
+	if (mode->flags & DRM_MODE_FLAG_INTERLACE)
+		return MODE_NO_INTERLACE;
+
+	/* Tiled modesets depend on IMP for allocation, so keep their probe
+	 * checks enabled even with imp_check=0.
+	 */
+	if (!nouveau_imp_check && !disp->tile.nr_tiles)
+		return MODE_OK;
+
+	/* Firmware without the IMP API. */
+	if (disp->imp_unsupported)
+		return MODE_OK;
+
+	ret = nv50_disp_pm_get(dev);
+	if (ret)
+		goto fail;
+
+	/* Convert the mode to the raster atomic check would program. */
+	adjusted = *mode;
+	nv50_head_mode_from_drm(&adjusted, &m);
+
+	/* Use the first present head rather than assuming head 0 exists. */
+	probe_head = disp->disp->head_mask ? ffs(disp->disp->head_mask) - 1 : 0;
+
+	imp.num_heads = 1;
+	imp.tiled = disp->tile.nr_tiles > 0;
+	imph->index = probe_head;
+	/* Probe the unscaled viewport with two filter taps. */
+	imph->vtaps = 2;
+	/* A zero mask lets IMP choose tiles for this head in isolation. Atomic
+	 * check handles contention with other heads.
+	 */
+	imph->tile_mask = 0;
+	imph->pclk_khz = m.clock;
+	imph->htotal = m.h.active;
+	imph->vtotal = m.v.active;
+	imph->hblanks = m.h.blanks;
+	imph->hblanke = m.h.blanke;
+	imph->vblanks = m.v.blanks;
+	imph->vblanke = m.v.blanke;
+	/* Use the converted viewport so stereo frame packing matches the
+	 * raster sent to IMP.
+	 */
+	imph->in_w = adjusted.crtc_hdisplay;
+	imph->in_h = adjusted.crtc_vdisplay;
+	imph->out_w = adjusted.crtc_hdisplay;
+	imph->out_h = adjusted.crtc_vdisplay;
+
+	/* Probe with only primary RGB formats up to 32 bpp so modes that
+	 * require compositor fallback remain available. The modeset check will
+	 * account for other windows and active heads.
+	 */
+	imph->wndw_formats[0] = NVIF_DISP_IMP_FORMAT_RGB_PACKED_1_BPP |
+				NVIF_DISP_IMP_FORMAT_RGB_PACKED_2_BPP |
+				NVIF_DISP_IMP_FORMAT_RGB_PACKED_4_BPP;
+
+	ret = nvif_disp_imp_check(disp->disp, &imp);
+	pm_runtime_mark_last_busy(dev->dev);
+	pm_runtime_put_autosuspend(dev->dev);
+	if (ret == -ENODEV) {
+		disp->imp_unsupported = true;
+		return MODE_OK;
+	}
+	if (ret)
+		goto fail;
+
+	return imp.possible ? MODE_OK : MODE_BAD;
+
+fail:
+	/* An unexpected query or runtime PM error must not admit an unchecked
+	 * mode.
+	 */
+	drm_warn_once(dev, "IMP mode check failed (%d), rejecting\n", ret);
+	return MODE_ERROR;
+}
+
+/******************************************************************************
  * HDMI
  *****************************************************************************/
+
 static void
 nv50_hdmi_enable(struct drm_encoder *encoder, struct nouveau_crtc *nv_crtc,
 		 struct nouveau_connector *nv_connector, struct drm_atomic_commit *state,
@@ -1186,6 +1285,7 @@ nv50_mstc_mode_valid(struct drm_connector *connector,
 {
 	struct nv50_mstc *mstc = nv50_mstc(connector);
 	struct nouveau_encoder *outp = mstc->mstm->outp;
+	enum drm_mode_status status;
 
 	/* Reject modes exceeding the postcomp viewport limit where scaler
 	 * limits are enforced. Atomic check applies the same limit.
@@ -1203,7 +1303,12 @@ nv50_mstc_mode_valid(struct drm_connector *connector,
 	 * MSTB's max possible PBN
 	 */
 
-	return nv50_dp_mode_valid(outp, mode, NULL);
+	status = nv50_dp_mode_valid(outp, mode, NULL);
+	if (status != MODE_OK ||
+	    !nouveau_display(connector->dev)->disp_imp)
+		return status;
+
+	return nv50_imp_mode_valid(connector, mode);
 }
 
 static int

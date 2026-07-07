@@ -360,11 +360,9 @@ nv50_head_atomic_check_lut(struct nv50_head *head,
 	return 0;
 }
 
-static void
-nv50_head_atomic_check_mode(struct nv50_head *head, struct nv50_head_atom *asyh)
+void
+nv50_head_mode_from_drm(struct drm_display_mode *mode, struct nv50_head_mode *m)
 {
-	struct drm_display_mode *mode = &asyh->state.adjusted_mode;
-	struct nv50_head_mode *m = &asyh->mode;
 	u32 blankus;
 
 	drm_mode_set_crtcinfo(mode, CRTC_INTERLACE_HALVE_V | CRTC_STEREO_DOUBLE);
@@ -403,6 +401,14 @@ nv50_head_atomic_check_mode(struct nv50_head *head, struct nv50_head_atom *asyh)
 		m->interlace = false;
 	}
 	m->clock = mode->crtc_clock;
+}
+
+static void
+nv50_head_atomic_check_mode(struct nv50_head *head, struct nv50_head_atom *asyh)
+{
+	struct drm_display_mode *mode = &asyh->state.adjusted_mode;
+
+	nv50_head_mode_from_drm(mode, &asyh->mode);
 
 	asyh->or.nhsync = !!(mode->flags & DRM_MODE_FLAG_NHSYNC);
 	asyh->or.nvsync = !!(mode->flags & DRM_MODE_FLAG_NVSYNC);

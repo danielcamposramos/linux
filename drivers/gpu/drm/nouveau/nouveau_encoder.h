@@ -164,6 +164,8 @@ enum drm_mode_status nv50_dp_mode_valid(struct nouveau_encoder *,
 					const struct drm_display_mode *,
 					unsigned *clock);
 
+enum drm_mode_status nv50_imp_mode_valid(struct drm_connector *,
+					 const struct drm_display_mode *);
 struct nouveau_connector *
 nv50_outp_get_new_connector(struct drm_atomic_commit *state, struct nouveau_encoder *outp);
 struct nouveau_connector *

@@ -42,6 +42,11 @@ struct nouveau_display {
 	struct drm_atomic_commit *suspend;
 
 	const u64 *format_modifiers;
+
+	/* Gate IMP in the shared connector helpers, whose pre-NV50 callers do
+	 * not have an nv50_disp.
+	 */
+	bool disp_imp;
 };
 
 static inline struct nouveau_display *

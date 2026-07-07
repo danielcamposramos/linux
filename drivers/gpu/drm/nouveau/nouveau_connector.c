@@ -1189,8 +1189,15 @@ nouveau_connector_mode_valid(struct drm_connector *connector,
 		break;
 	case DCB_OUTPUT_TV:
 		return get_encoder_i2c_funcs(encoder)->mode_valid(encoder, mode);
-	case DCB_OUTPUT_DP:
-		return nv50_dp_mode_valid(nv_encoder, mode, NULL);
+	case DCB_OUTPUT_DP: {
+		enum drm_mode_status status =
+			nv50_dp_mode_valid(nv_encoder, mode, NULL);
+
+		if (status != MODE_OK ||
+		    !nouveau_display(connector->dev)->disp_imp)
+			return status;
+		return nv50_imp_mode_valid(connector, mode);
+	}
 	default:
 		BUG();
 		return MODE_BAD;
@@ -1203,6 +1210,14 @@ nouveau_connector_mode_valid(struct drm_connector *connector,
 		return MODE_CLOCK_LOW;
 	if (clock > max_clock)
 		return MODE_CLOCK_HIGH;
+
+	/* Keep explicit HDMI clock overrides effective by bypassing IMP on
+	 * this path.
+	 */
+	if (nv_encoder->dcb->type == DCB_OUTPUT_TMDS &&
+	    nouveau_hdmimhz <= 0 &&
+	    nouveau_display(connector->dev)->disp_imp)
+		return nv50_imp_mode_valid(connector, mode);
 
 	return MODE_OK;
 }

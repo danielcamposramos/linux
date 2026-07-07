@@ -121,6 +121,8 @@ int corec37d_caps_init(struct nouveau_drm *drm, struct nv50_disp *disp)
 		return ret;
 	}
 
+	nouveau_display(drm->dev)->disp_imp = true;
+
 	return 0;
 }
 
