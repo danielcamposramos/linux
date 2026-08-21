@@ -2477,6 +2477,16 @@ nv50_disp_atomic_commit_tail(struct drm_atomic_commit *state)
 						head->base.index * 2 + w,
 						asyh->imp.prog.formats[w],
 						asyh->imp.prog.fetch[w]);
+
+				/* Disable watermarks with the planes, but
+				 * defer re-enabling them until after the plane
+				 * wait below.
+				 */
+				if (disp->disp->glitchy_mclk_switch &&
+				    disp->core->func->mclk_war &&
+				    asyh->imp.prog.mclk_war)
+					disp->core->func->mclk_war(disp->core,
+						head->base.index, true);
 			}
 			nv50_head_flush_set(head, asyh);
 			interlock[NV50_DISP_INTERLOCK_CORE] = 1;
@@ -2576,6 +2586,37 @@ nv50_disp_atomic_commit_tail(struct drm_atomic_commit *state)
 		int ret = nv50_wndw_wait_armed(wndw, asyw);
 		if (ret)
 			NV_ERROR(drm, "%s: timeout\n", plane->name);
+	}
+
+	/* Re-enabling watermarks before the plane transition could expose the
+	 * old scanout to the Turing bug. Defer it to a separate update after
+	 * the plane wait, like how OpenRM's post-flip path waits for the main
+	 * window to idle.
+	 */
+	if (disp->disp->glitchy_mclk_switch && core->func->mclk_war) {
+		u32 war_interlock[NV50_DISP_INTERLOCK__SIZE] = {};
+		bool enable = false;
+
+		mutex_lock(&disp->mutex);
+		for_each_oldnew_crtc_in_state(state, crtc, old_crtc_state, new_crtc_state, i) {
+			const struct nv50_head_atom *armh = nv50_head_atom(old_crtc_state);
+			const struct nv50_head_atom *asyh = nv50_head_atom(new_crtc_state);
+
+			if (armh->imp.prog.mclk_war && !asyh->imp.prog.mclk_war) {
+				core->func->mclk_war(core, nv50_head(crtc)->base.index,
+						     false);
+				enable = true;
+			}
+		}
+
+		if (enable) {
+			core->func->ntfy_init(disp->sync, NV50_DISP_CORE_NTFY);
+			core->func->update(core, war_interlock, true);
+			if (core->func->ntfy_wait_done(disp->sync, NV50_DISP_CORE_NTFY,
+						       core->chan.base.device))
+				NV_ERROR(drm, "core notifier timeout\n");
+		}
+		mutex_unlock(&disp->mutex);
 	}
 
 	for_each_new_crtc_in_state(state, crtc, new_crtc_state, i) {
@@ -3262,6 +3303,23 @@ nv50_disp_atomic_check_imp(struct drm_device *dev, struct drm_atomic_commit *sta
 			 * therefore requires the core lock.
 			 */
 			nv50_atom(state)->lock_core = true;
+		}
+
+		/* Without a primary window, either an attached cursor or an
+		 * active overlay requires the Turing workaround. Test cursor
+		 * surface attachment rather than visibility, matching OpenRM's
+		 * treatment of off-screen cursors.
+		 */
+		if (disp->disp->glitchy_mclk_switch && disp->core->func->mclk_war) {
+			bool war = new_crtc_state->active &&
+				   !asyh->imp.prog.formats[0] &&
+				   (asyh->curs.surface || asyh->imp.prog.formats[1]);
+
+			if (war != asyh->imp.prog.mclk_war) {
+				asyh->imp.prog.mclk_war = war;
+				asyh->set.imp = true;
+				nv50_atom(state)->lock_core = true;
+			}
 		}
 	}
 

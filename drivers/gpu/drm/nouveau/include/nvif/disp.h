@@ -8,6 +8,7 @@ struct nvif_disp {
 	unsigned long conn_mask;
 	unsigned long outp_mask;
 	unsigned long head_mask;
+	bool glitchy_mclk_switch;
 };
 
 int nvif_disp_ctor(struct nvif_device *, const char *name, s32 oclass,

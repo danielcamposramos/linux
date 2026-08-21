@@ -28,6 +28,7 @@
 
 #include <nvhw/class/clc57d.h>
 #include <nvhw/class/clc573.h>
+#include <nvhw/class/clc37dswspare.h>
 
 int
 corec57d_caps_init(struct nouveau_drm *drm, struct nv50_disp *disp)
@@ -116,6 +117,28 @@ const s16 corec57d_taps5_coeff[3][16][4] = {
 	  {   0,  31,  95,  17 }, {  0,  29,  97,  18 }, {  0,  27, 100,  20 },
 	  {   0,  25, 102,  22 } },
 };
+
+int
+corec57d_mclk_war(struct nv50_core *core, int head, bool disable)
+{
+	struct nvif_push *push = &core->chan.push;
+	int ret;
+
+	ret = PUSH_WAIT(push, 2);
+	if (ret)
+		return ret;
+
+	/* A mid-frame memory clock switch can corrupt scanout without a
+	 * primary window on Turing, so disable the mid-frame/DWCF watermarks.
+	 * This write leaves VPLL_REF at NO_PREF because nouveau never selects
+	 * the QSYNC reference.
+	 */
+	PUSH_MTHD(push, NVC57D, HEAD_SET_SW_SPARE_A(head),
+		  disable ?
+		  NVDEF(NVC37D, HEAD_SET_SW_SPARE_A, DISABLE_MID_FRAME_AND_DWCF_WATERMARK, TRUE) :
+		  NVDEF(NVC37D, HEAD_SET_SW_SPARE_A, DISABLE_MID_FRAME_AND_DWCF_WATERMARK, FALSE));
+	return 0;
+}
 
 int
 corec57d_wndw_usage_bounds(struct nv50_core *core, int wndw, u8 formats,
@@ -226,6 +249,33 @@ corec57d = {
 	.crc = &crcc57d,
 #endif
 };
+
+/* Turing shares the C57D implementation with later GPUs, but only its table
+ * gets the mclk workaround like in OpenRM's C5 HAL.
+ */
+static const struct nv50_core_func
+coretu102 = {
+	.init = corec57d_init,
+	.ntfy_init = corec37d_ntfy_init,
+	.caps_init = corec57d_caps_init,
+	.caps_class = GV100_DISP_CAPS,
+	.ntfy_wait_done = corec37d_ntfy_wait_done,
+	.update = corec37d_update,
+	.wndw.owner = corec37d_wndw_owner,
+	.wndw.usage_bounds = corec57d_wndw_usage_bounds,
+	.mclk_war = corec57d_mclk_war,
+	.head = &headc57d,
+	.sor = &sorc37d,
+#if IS_ENABLED(CONFIG_DEBUG_FS)
+	.crc = &crcc57d,
+#endif
+};
+
+int
+coretu102_new(struct nouveau_drm *drm, s32 oclass, struct nv50_core **pcore)
+{
+	return core507d_new_(&coretu102, drm, oclass, pcore);
+}
 
 int
 corec57d_new(struct nouveau_drm *drm, s32 oclass, struct nv50_core **pcore)

@@ -39,6 +39,8 @@ struct nv50_core_func {
 		int (*usage_bounds)(struct nv50_core *, int wndw, u8 formats,
 				    u16 fetch);
 	} wndw;
+	/* Toggle mid-frame/DWCF watermarks for Turing bug 2052012. */
+	int (*mclk_war)(struct nv50_core *, int head, bool disable);
 
 	const struct nv50_head_func *head;
 #if IS_ENABLED(CONFIG_DEBUG_FS)
@@ -86,7 +88,9 @@ extern const struct nv50_outp_func sorc37d;
 int corec57d_caps_init(struct nouveau_drm *, struct nv50_disp *);
 extern const s16 corec57d_taps5_coeff[3][16][4];
 int corec57d_wndw_usage_bounds(struct nv50_core *, int, u8, u16);
+int corec57d_mclk_war(struct nv50_core *, int, bool);
 int corec57d_new(struct nouveau_drm *, s32, struct nv50_core **);
+int coretu102_new(struct nouveau_drm *, s32, struct nv50_core **);
 
 int coreca7d_new(struct nouveau_drm *, s32, struct nv50_core **);
 #endif

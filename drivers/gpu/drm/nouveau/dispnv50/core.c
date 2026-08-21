@@ -45,7 +45,7 @@ nv50_core_new(struct nouveau_drm *drm, struct nv50_core **pcore)
 		{ GB202_DISP_CORE_CHANNEL_DMA, 0, coreca7d_new },
 		{ AD102_DISP_CORE_CHANNEL_DMA, 0, corec57d_new },
 		{ GA102_DISP_CORE_CHANNEL_DMA, 0, corec57d_new },
-		{ TU102_DISP_CORE_CHANNEL_DMA, 0, corec57d_new },
+		{ TU102_DISP_CORE_CHANNEL_DMA, 0, coretu102_new },
 		{ GV100_DISP_CORE_CHANNEL_DMA, 0, corec37d_new },
 		{ GP102_DISP_CORE_CHANNEL_DMA, 0, core917d_new },
 		{ GP100_DISP_CORE_CHANNEL_DMA, 0, core917d_new },

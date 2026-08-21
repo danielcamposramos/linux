@@ -79,6 +79,7 @@ nvif_disp_ctor(struct nvif_device *device, const char *name, s32 oclass, struct 
 	disp->conn_mask = args.conn_mask;
 	disp->outp_mask = args.outp_mask;
 	disp->head_mask = args.head_mask;
+	disp->glitchy_mclk_switch = args.glitchy_mclk_switch;
 	return 0;
 }
 

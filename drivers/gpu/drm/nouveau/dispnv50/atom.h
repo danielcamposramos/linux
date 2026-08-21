@@ -90,6 +90,7 @@ struct nv50_head_atom {
 
 	struct {
 		bool visible;
+		bool surface;	/* attached surface, even if off-screen */
 		u32 handle;
 		u64 offset:40;
 		u8  layout:2;
@@ -156,6 +157,10 @@ struct nv50_head_atom {
 		struct {
 			u8 formats[2];
 			u16 fetch[2];
+			/* Tracks disabled mid-frame/DWCF watermarks for Turing
+			 * bug 2052012.
+			 */
+			bool mclk_war;
 		} prog;
 	} imp;
 

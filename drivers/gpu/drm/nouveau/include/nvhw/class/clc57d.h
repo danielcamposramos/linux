@@ -359,6 +359,8 @@
 #define NVC57D_HEAD_SET_CRC_CONTROL_CRC_DURING_SNOOZE                           9:9
 #define NVC57D_HEAD_SET_CRC_CONTROL_CRC_DURING_SNOOZE_DISABLE                   (0x00000000)
 #define NVC57D_HEAD_SET_CRC_CONTROL_CRC_DURING_SNOOZE_ENABLE                    (0x00000001)
+#define NVC57D_HEAD_SET_SW_SPARE_A(a)                                           (0x00002194 + (a)*0x00000400)
+#define NVC57D_HEAD_SET_SW_SPARE_A_CODE                                         31:0
 #define NVC57D_HEAD_SET_OUTPUT_SCALER_COEFF_VALUE(a)                            (0x00002214 + (a)*0x00000400)
 #define NVC57D_HEAD_SET_OUTPUT_SCALER_COEFF_VALUE_DATA                          9:0
 #define NVC57D_HEAD_SET_OUTPUT_SCALER_COEFF_VALUE_INDEX                         19:12

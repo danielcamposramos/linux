@@ -5,7 +5,8 @@
 union nvif_disp_args {
 	struct nvif_disp_v0 {
 		__u8 version;
-		__u8 pad01[3];
+		__u8 glitchy_mclk_switch;	/* out: Turing bug 2052012 */
+		__u8 pad02[2];
 		__u32 conn_mask;
 		__u32 outp_mask;
 		__u32 head_mask;

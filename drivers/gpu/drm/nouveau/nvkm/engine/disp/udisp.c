@@ -176,6 +176,8 @@ nvkm_udisp_new(const struct nvkm_oclass *oclass, void *argv, u32 argc, struct nv
 	*pobject = &disp->client.object;
 	spin_unlock(&disp->client.lock);
 
+	args->v0.glitchy_mclk_switch = disp->glitchy_mclk_switch;
+
 	args->v0.conn_mask = 0;
 	list_for_each_entry(conn, &disp->conns, head)
 		args->v0.conn_mask |= BIT(conn->index);

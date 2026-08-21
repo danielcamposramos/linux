@@ -44,6 +44,11 @@ struct nvkm_disp {
 	const struct nvkm_disp_func *func;
 	struct nvkm_engine engine;
 
+	/* Memory clock switches can corrupt windowed scanout (Turing bug
+	 * 2052012).
+	 */
+	bool glitchy_mclk_switch;
+
 	/* IMP validation, or NULL for firmware without this control. Set tiled
 	 * on GPUs that need a tiling assignment for the configuration to be valid.
 	 */

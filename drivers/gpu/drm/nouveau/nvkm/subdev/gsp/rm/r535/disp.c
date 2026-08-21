@@ -1425,12 +1425,26 @@ r535_disp_fini(struct nvkm_disp *disp, bool suspend)
 static int
 r535_disp_init(struct nvkm_disp *disp)
 {
+	NV5070_CTRL_SYSTEM_GET_CAPS_V2_PARAMS *caps;
 	int ret;
 
 	ret = nvkm_gsp_rm_alloc(&disp->rm.device.object, disp->func->root.oclass << 16,
 				disp->func->root.oclass, 0, &disp->rm.object);
 	if (ret)
 		return ret;
+
+	/* Use the display capability bit to enable the Turing memory clock
+	 * workaround only where required.
+	 */
+	caps = nvkm_gsp_rm_ctrl_rd(&disp->rm.object,
+				   NV5070_CTRL_CMD_SYSTEM_GET_CAPS_V2,
+				   sizeof(*caps));
+	if (!IS_ERR(caps)) {
+		disp->glitchy_mclk_switch =
+			NV5070_CTRL_SYSTEM_GET_CAP(caps->capsTbl,
+				NV5070_CTRL_SYSTEM_CAPS_BUG_2052012_GLITCHY_MCLK_SWITCH);
+		nvkm_gsp_rm_ctrl_done(&disp->rm.object, caps);
+	}
 
 	return 0;
 }

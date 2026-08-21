@@ -94,6 +94,7 @@ curs507a_release(struct nv50_wndw *wndw, struct nv50_wndw_atom *asyw,
 		 struct nv50_head_atom *asyh)
 {
 	asyh->curs.visible = false;
+	asyh->curs.surface = false;
 }
 
 static int
@@ -109,6 +110,7 @@ curs507a_acquire(struct nv50_wndw *wndw, struct nv50_wndw_atom *asyw,
 						  DRM_PLANE_NO_SCALING,
 						  DRM_PLANE_NO_SCALING,
 						  true, true);
+	asyh->curs.surface = true;
 	asyh->curs.visible = asyw->state.visible;
 	if (ret || !asyh->curs.visible)
 		return ret;
