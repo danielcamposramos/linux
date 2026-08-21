@@ -27,6 +27,12 @@ struct nv50_disp {
 		u32 multi_phywins; /* mask: multi-tile capable phywins */
 	} tile;
 
+	/* Protect inherited heads while the first commit holding the core lock
+	 * after display init clears the remaining default tile/phywin assignments.
+	 */
+	u32 tiles_protect;
+	bool tiles_pending;
+
 	/* Turing+ output scaler limits, zero for heads without a scaler.
 	 * Downscale factors are input/output * 0x400, while max_pixels limits
 	 * the width of vertical filtering at each tap count.

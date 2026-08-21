@@ -123,7 +123,7 @@ coreca7d_init(struct nv50_core *core)
 	const u32 windows = 8, heads = 4;
 	int ret, i;
 
-	ret = PUSH_WAIT(push, windows * 6 + heads * 6);
+	ret = PUSH_WAIT(push, windows * 5 + heads * 2);
 	if (ret)
 		return ret;
 
@@ -140,9 +140,7 @@ coreca7d_init(struct nv50_core *core)
 			  NVVAL(NVCA7D, WINDOW_SET_WINDOW_USAGE_BOUNDS, MAX_PIXELS_FETCHED_PER_LINE, 0x7fff) |
 			  NVDEF(NVCA7D, WINDOW_SET_WINDOW_USAGE_BOUNDS, ILUT_ALLOWED, TRUE) |
 			  NVDEF(NVCA7D, WINDOW_SET_WINDOW_USAGE_BOUNDS, INPUT_SCALER_TAPS, TAPS_2) |
-			  NVDEF(NVCA7D, WINDOW_SET_WINDOW_USAGE_BOUNDS, UPSCALING_ALLOWED, FALSE),
-
-					WINDOW_SET_PHYSICAL(i), BIT(i));
+			  NVDEF(NVCA7D, WINDOW_SET_WINDOW_USAGE_BOUNDS, UPSCALING_ALLOWED, FALSE));
 	}
 
 	for (i = 0; i < heads; i++) {
@@ -151,10 +149,6 @@ coreca7d_init(struct nv50_core *core)
 			  NVDEF(NVCA7D, HEAD_SET_HEAD_USAGE_BOUNDS, OLUT_ALLOWED, TRUE) |
 			  NVDEF(NVCA7D, HEAD_SET_HEAD_USAGE_BOUNDS, OUTPUT_SCALER_TAPS, TAPS_2) |
 			  NVDEF(NVCA7D, HEAD_SET_HEAD_USAGE_BOUNDS, UPSCALING_ALLOWED, TRUE));
-
-		PUSH_MTHD(push, NVCA7D, HEAD_SET_TILE_MASK(i), BIT(i));
-
-		PUSH_MTHD(push, NVCA7D, TILE_SET_TILE_SIZE(i), 0);
 	}
 
 	/* CA7D uses the same five-tap coefficient table as C57D. */
@@ -180,9 +174,46 @@ coreca7d_init(struct nv50_core *core)
 	return PUSH_KICK(push);
 }
 
+/* Default assignments can leave a tile or phywin owned by an inactive
+ * head when a later modeset assigns it elsewhere. Clear those assignments
+ * while preserving the inherited heads in protect.
+ *
+ * Walk all possible heads (as NVKMS does) because hardware can have more
+ * heads than the driver exposes. The caller must issue a core update to
+ * latch the clears.
+ */
+static int
+coreca7d_tiles_init(struct nv50_core *core, u32 protect)
+{
+	struct nvif_push *push = &core->chan.push;
+	const u32 heads = 4;
+	int ret, i;
+
+	ret = PUSH_WAIT(push, NVCA73_SYS_CAP_HEAD_EXISTS__SIZE_1 * 2 +
+			      heads * 4);
+	if (ret)
+		return ret;
+
+	for (i = 0; i < NVCA73_SYS_CAP_HEAD_EXISTS__SIZE_1; i++) {
+		if (!(protect & BIT(i)))
+			PUSH_MTHD(push, NVCA7D, HEAD_SET_TILE_MASK(i), 0x00000000);
+	}
+
+	for (i = 0; i < heads; i++) {
+		if (protect & BIT(i))
+			continue;
+
+		PUSH_MTHD(push, NVCA7D, WINDOW_SET_PHYSICAL(i * 2), 0x00000000);
+		PUSH_MTHD(push, NVCA7D, WINDOW_SET_PHYSICAL(i * 2 + 1), 0x00000000);
+	}
+
+	return 0;
+}
+
 static const struct nv50_core_func
 coreca7d = {
 	.init = coreca7d_init,
+	.tiles_init = coreca7d_tiles_init,
 	.ntfy_init = corec37d_ntfy_init,
 	.caps_init = coreca7d_caps_init,
 	.caps_class = GB202_DISP_CAPS,

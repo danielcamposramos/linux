@@ -2207,6 +2207,19 @@ nv50_disp_atomic_commit_tail(struct drm_atomic_commit *state)
 	if (atom->lock_core)
 		mutex_lock(&disp->mutex);
 
+	/* A commit holding the core lock may have no core methods to flush, so
+	 * force an update to latch the default tile/phywin clears. Do not retry a
+	 * failure: tiles_protect describes init state, and a later attempt could
+	 * clear assignments made by this commit.
+	 */
+	if (disp->tiles_pending && atom->lock_core && core->func->tiles_init) {
+		if (core->func->tiles_init(core, disp->tiles_protect))
+			drm_warn(dev, "default tile assignments not cleared\n");
+		else
+			interlock[NV50_DISP_INTERLOCK_CORE] |= 1;
+		disp->tiles_pending = false;
+	}
+
 	/* Disable head(s). */
 	for_each_oldnew_crtc_in_state(state, crtc, old_crtc_state, new_crtc_state, i) {
 		struct nv50_head_atom *asyh = nv50_head_atom(new_crtc_state);
@@ -2725,6 +2738,9 @@ nv50_head_armed_read(struct drm_device *dev, struct nouveau_crtc *nv_crtc,
 
 	armh->or.nhsync = args.nhsync;
 	armh->or.nvsync = args.nvsync;
+	armh->mtc.tiles_mask = args.tiles_mask;
+	armh->mtc.phywins_mask[0] = args.phywins[0];
+	armh->mtc.phywins_mask[1] = args.phywins[1];
 	armh->mode.clock = div_u64(args.hz, 1000);
 	armh->mode.interlace = args.interlace;
 	armh->mode.h.active = args.htotal;
@@ -2929,7 +2945,8 @@ nv50_display_read_hw_state(struct nouveau_drm *drm)
 static int
 nv50_display_init(struct drm_device *dev, bool resume, bool runtime)
 {
-	struct nv50_core *core = nv50_disp(dev)->core;
+	struct nv50_disp *disp = nv50_disp(dev);
+	struct nv50_core *core = disp->core;
 	struct drm_encoder *encoder;
 
 	if (resume || runtime)
@@ -2945,6 +2962,39 @@ nv50_display_init(struct drm_device *dev, bool resume, bool runtime)
 
 	if (!resume)
 		nv50_display_read_hw_state(nouveau_drm(dev));
+
+	if (core->func->tiles_init) {
+		struct drm_crtc *crtc;
+		u32 protect = 0;
+
+		/* Inherited heads must retain the assignments they are scanning out with.
+		 * Use active CRTC state from the output query to identify them, since
+		 * unused heads may retain stale rasters. On resume all heads are off, so
+		 * the restore commit can clear every default before reprogramming them.
+		 */
+		if (!resume && !runtime) {
+			drm_for_each_crtc(crtc, dev) {
+				struct nv50_head_atom *armh;
+				int i = nv50_head(crtc)->base.index;
+
+				if (!crtc->state || !crtc->state->active)
+					continue;
+
+				armh = nv50_head_atom(crtc->state);
+				if (!armh->mtc.tiles_mask) {
+					drm_warn(dev, "head-%d: tile ownership not read back, assuming the identity default\n",
+						 i);
+					armh->mtc.tiles_mask = BIT(i);
+					armh->mtc.phywins_mask[0] = BIT(i * 2);
+					armh->mtc.phywins_mask[1] = BIT(i * 2 + 1);
+				}
+				protect |= BIT(i);
+			}
+		}
+
+		disp->tiles_protect = protect;
+		disp->tiles_pending = true;
+	}
 
 	return 0;
 }

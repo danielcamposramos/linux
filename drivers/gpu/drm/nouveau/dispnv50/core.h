@@ -21,6 +21,10 @@ struct nv50_core_func {
 	int (*init)(struct nv50_core *);
 	void (*ntfy_init)(struct nouveau_bo *, u32 offset);
 	int (*caps_init)(struct nouveau_drm *, struct nv50_disp *);
+	/* Clear default tile/phywin assignments outside protect once after
+	 * GB20x display init. The caller's core update applies the clears.
+	 */
+	int (*tiles_init)(struct nv50_core *, u32 protect);
 	u32 caps_class;
 	int (*ntfy_wait_done)(struct nouveau_bo *, u32 offset,
 			      struct nvif_device *);
