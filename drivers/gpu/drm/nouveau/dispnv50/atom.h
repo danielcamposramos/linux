@@ -30,6 +30,14 @@ struct nv50_head_atom {
 		u16 iH;
 		u16 oW;
 		u16 oH;
+		/* Taps selected from the Turing+ scaler caps, with downscale factors
+		 * scaled by 0x400 for the hardware usage bounds.
+		 */
+		u8 htaps;
+		u8 vtaps;
+		u16 max_h;
+		u16 max_v;
+		bool upscale_v;
 	} view;
 
 	struct nv50_head_mode {

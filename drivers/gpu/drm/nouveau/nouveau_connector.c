@@ -1157,6 +1157,18 @@ nouveau_connector_mode_valid(struct drm_connector *connector,
 	struct drm_encoder *encoder = to_drm_encoder(nv_encoder);
 	unsigned int min_clock = 25000, max_clock = min_clock, clock = mode->clock;
 
+	/* Reject modes exceeding the postcomp viewport limit where scaler
+	 * limits are enforced. Atomic check applies the same limit.
+	 */
+	if (nouveau_display(connector->dev)->scaler_limits) {
+		const u16 max = nouveau_display(connector->dev)->max_viewport;
+
+		if (mode->hdisplay > max)
+			return MODE_BAD_HVALUE;
+		if (mode->vdisplay > max)
+			return MODE_BAD_VVALUE;
+	}
+
 	switch (nv_encoder->dcb->type) {
 	case DCB_OUTPUT_LVDS:
 		if (nv_connector->native_mode &&
@@ -1212,6 +1224,24 @@ nouveau_connector_atomic_check(struct drm_connector *connector, struct drm_atomi
 	struct nouveau_connector *nv_conn = nouveau_connector(connector);
 	struct drm_connector_state *conn_state =
 		drm_atomic_get_new_connector_state(state, connector);
+	struct nouveau_conn_atom *armc =
+		nouveau_conn_atom(drm_atomic_get_old_connector_state(state, connector));
+	struct nouveau_conn_atom *asyc = nouveau_conn_atom(conn_state);
+	struct drm_crtc_state *crtc_state;
+
+	/* Scaling and underscan changes alter the viewport used for mode
+	 * validation, so require a modeset to revalidate the configuration.
+	 */
+	if (conn_state->crtc && nouveau_display(connector->dev)->scaler_limits &&
+	    (armc->scaler.mode != asyc->scaler.mode ||
+	     armc->scaler.underscan.mode != asyc->scaler.underscan.mode ||
+	     armc->scaler.underscan.hborder != asyc->scaler.underscan.hborder ||
+	     armc->scaler.underscan.vborder != asyc->scaler.underscan.vborder)) {
+		crtc_state = drm_atomic_get_crtc_state(state, conn_state->crtc);
+		if (IS_ERR(crtc_state))
+			return PTR_ERR(crtc_state);
+		crtc_state->connectors_changed = true;
+	}
 
 	if (!nv_conn->dp_encoder || !nv_conn->dp_encoder->dp.mstm)
 		return 0;

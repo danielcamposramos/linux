@@ -25,6 +25,11 @@ struct nouveau_display {
 
 	struct nvif_disp disp;
 
+	/* Output scaler capabilities are known and enforced (Turing+). */
+	bool scaler_limits;
+	/* Maximum postcomp viewport dimension: 16384 on GB20x, 8192 on older. */
+	u16 max_viewport;
+
 	struct drm_property *dithering_mode;
 	struct drm_property *dithering_depth;
 	struct drm_property *underscan_property;

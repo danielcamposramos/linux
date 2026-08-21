@@ -123,7 +123,7 @@ nv50_head_atomic_check_dither(struct nv50_head_atom *armh,
 	asyh->set.dither = true;
 }
 
-static void
+static int
 nv50_head_atomic_check_view(struct nv50_head_atom *armh,
 			    struct nv50_head_atom *asyh,
 			    struct nouveau_conn_atom *asyc)
@@ -218,7 +218,80 @@ nv50_head_atomic_check_view(struct nv50_head_atom *armh,
 		break;
 	}
 
+	/* Match OpenRM's two-tap horizontal default, increasing to five only
+	 * for ratios two taps cannot support. Prefer five vertical taps where
+	 * the line store allows, except for doublescan, which uses two to avoid
+	 * blurring duplicated lines. GV100 keeps its existing two-tap setup
+	 * without scaler limit enforcement.
+	 */
+	asyh->view.htaps = 2;
+	asyh->view.vtaps = 2;
+	asyh->view.max_h = 0x400;
+	asyh->view.max_v = 0x400;
+	asyh->view.upscale_v = asyh->view.oH > asyh->view.iH;
+
+	if (nouveau_display(connector->dev)->scaler_limits) {
+		const struct nv50_scaler_caps *scaler =
+			&nv50_disp(connector->dev)->scaler[nv50_head(asyh->state.crtc)->base.index];
+		const u16 iW = asyh->view.iW, iH = asyh->view.iH;
+		const u16 oW = asyh->view.oW, oH = asyh->view.oH;
+		const u16 line = min(iW, oW);
+		const u16 max = nouveau_display(connector->dev)->max_viewport;
+		u32 factor;
+
+		/* Reject empty viewports and dimensions beyond the postcomp limit. */
+		if (!iW || !iH || !oW || !oH ||
+		    iW > max || iH > max || oW > max || oH > max) {
+			drm_dbg_kms(connector->dev,
+				    "viewport %dx%d -> %dx%d beyond hardware limits\n",
+				    iW, iH, oW, oH);
+			return -EINVAL;
+		}
+
+		if (oW != iW) {
+			factor = DIV_ROUND_UP(iW * 0x400, oW);
+			if (factor <= scaler->taps2.max_h) {
+				asyh->view.htaps = 2;
+			} else if (factor <= scaler->taps5.max_h) {
+				asyh->view.htaps = 5;
+			} else {
+				drm_dbg_kms(connector->dev,
+					    "horizontal scale %d/%d beyond filter limits\n",
+					    iW, oW);
+				return -EINVAL;
+			}
+			if (oW < iW)
+				asyh->view.max_h = factor;
+		}
+
+		if (oH != iH) {
+			if (line <= scaler->taps5.max_pixels &&
+			    !(omode->flags & DRM_MODE_FLAG_DBLSCAN))
+				asyh->view.vtaps = 5;
+			else if (line <= scaler->taps2.max_pixels)
+				asyh->view.vtaps = 2;
+			else
+				goto no_vfilter;
+
+			if (oH < iH) {
+				factor = DIV_ROUND_UP(iH * 0x400, oH);
+				if (factor > (asyh->view.vtaps == 5 ?
+					      scaler->taps5.max_v :
+					      scaler->taps2.max_v))
+					goto no_vfilter;
+				asyh->view.max_v = factor;
+			}
+		}
+	}
+
 	asyh->set.view = true;
+	return 0;
+
+no_vfilter:
+	drm_dbg_kms(connector->dev,
+		    "vertical scale %dx%d -> %dx%d beyond filter limits\n",
+		    asyh->view.iW, asyh->view.iH, asyh->view.oW, asyh->view.oH);
+	return -EINVAL;
 }
 
 static int
@@ -384,8 +457,11 @@ nv50_head_atomic_check(struct drm_crtc *crtc, struct drm_atomic_commit *state)
 			asyh->olut.visible = asyh->olut.handle != 0;
 
 		if (asyc) {
-			if (asyc->set.scaler)
-				nv50_head_atomic_check_view(armh, asyh, asyc);
+			if (asyc->set.scaler) {
+				ret = nv50_head_atomic_check_view(armh, asyh, asyc);
+				if (ret)
+					return ret;
+			}
 			if (asyc->set.dither)
 				nv50_head_atomic_check_dither(armh, asyh, asyc);
 			if (asyc->set.procamp)

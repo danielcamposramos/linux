@@ -74,6 +74,7 @@ int corec37d_wndw_owner(struct nv50_core *);
 extern const struct nv50_outp_func sorc37d;
 
 int corec57d_caps_init(struct nouveau_drm *, struct nv50_disp *);
+extern const s16 corec57d_taps5_coeff[3][16][4];
 int corec57d_new(struct nouveau_drm *, s32, struct nv50_core **);
 
 int coreca7d_new(struct nouveau_drm *, s32, struct nv50_core **);

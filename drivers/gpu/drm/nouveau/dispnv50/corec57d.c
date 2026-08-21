@@ -82,13 +82,45 @@ corec57d_caps_init(struct nouveau_drm *drm, struct nv50_disp *disp)
 			 scaler->taps2.max_pixels);
 	}
 
+	nouveau_display(drm->dev)->scaler_limits = true;
+	nouveau_display(drm->dev)->max_viewport =
+		disp->disp->object.oclass >= GB202_DISP ? 16384 : 8192;
+
 	return 0;
 }
+
+/* Five-tap coefficients from OpenRM's scalerTaps5Coeff, with 16 phases per
+ * ratio (1x, 2x, 4x) and four weights per phase. Hardware derives the center
+ * weight so all five taps sum to one. Phases 0 and +/-16 are symmetric, so row
+ * 0 packs phase 0's (c0, c1) followed by phase +/-16's (c0, c1). Hardware
+ * selects the phase sign.
+ */
+const s16 corec57d_taps5_coeff[3][16][4] = {
+	{ {   0,   0, -16, 144 }, {  0,  -5,   5,   0 }, {  0,  -9,  11,   0 },
+	  {  -1, -12,  18,  -1 }, { -1, -15,  25,  -1 }, { -1, -18,  33,  -2 },
+	  {  -2, -20,  42,  -3 }, { -2, -21,  51,  -3 }, { -3, -22,  60,  -5 },
+	  {  -3, -22,  70,  -6 }, { -4, -22,  81,  -7 }, { -4, -22,  91,  -9 },
+	  {  -5, -21, 102, -10 }, { -5, -20, 113, -12 }, { -5, -19, 125, -13 },
+	  {  -6, -18, 136, -15 } },
+	{ {   3,  60,  20, 108 }, {  3,  57,  63,   4 }, {  2,  54,  66,   4 },
+	  {   2,  51,  69,   5 }, {  2,  48,  72,   6 }, {  1,  45,  75,   7 },
+	  {   1,  43,  78,   7 }, {  1,  40,  81,   8 }, {  1,  37,  84,   9 },
+	  {   0,  35,  88,  10 }, {  0,  33,  91,  12 }, {  0,  30,  94,  13 },
+	  {   0,  28,  97,  14 }, {  0,  26,  99,  16 }, {  0,  24, 102,  17 },
+	  {   0,  22, 105,  19 } },
+	{ {   4,  62,  23, 105 }, {  4,  59,  64,   5 }, {  3,  56,  67,   6 },
+	  {   3,  53,  70,   7 }, {  2,  51,  73,   8 }, {  2,  48,  76,   8 },
+	  {   2,  45,  79,   9 }, {  1,  43,  81,  10 }, {  1,  40,  84,  12 },
+	  {   1,  38,  87,  13 }, {  1,  36,  90,  14 }, {  0,  34,  92,  15 },
+	  {   0,  31,  95,  17 }, {  0,  29,  97,  18 }, {  0,  27, 100,  20 },
+	  {   0,  25, 102,  22 } },
+};
 
 static int
 corec57d_init(struct nv50_core *core)
 {
 	struct nvif_push *push = &core->chan.push;
+	unsigned long head_mask = core->disp->disp->head_mask;
 	const u32 windows = 8; /*XXX*/
 	int ret, i;
 
@@ -111,6 +143,25 @@ corec57d_init(struct nv50_core *core)
 			  NVDEF(NVC57D, WINDOW_SET_WINDOW_USAGE_BOUNDS, ILUT_ALLOWED, TRUE) |
 			  NVDEF(NVC57D, WINDOW_SET_WINDOW_USAGE_BOUNDS, INPUT_SCALER_TAPS, TAPS_2) |
 			  NVDEF(NVC57D, WINDOW_SET_WINDOW_USAGE_BOUNDS, UPSCALING_ALLOWED, FALSE));
+	}
+
+	/* Initialize each head's coefficients before a modeset can select five taps. */
+	for_each_set_bit(i, &head_mask, 8) {
+		int idx;
+
+		ret = PUSH_WAIT(push, 3 * 16 * 4 * 2);
+		if (ret)
+			return ret;
+
+		/* The index encodes ratio << 6 | phase << 2 | coefficient. */
+		for (idx = 0; idx < 3 * 16 * 4; idx++) {
+			const s16 coeff =
+				corec57d_taps5_coeff[idx >> 6][(idx >> 2) & 15][idx & 3];
+
+			PUSH_MTHD(push, NVC57D, HEAD_SET_OUTPUT_SCALER_COEFF_VALUE(i),
+				  NVVAL(NVC57D, HEAD_SET_OUTPUT_SCALER_COEFF_VALUE, DATA, coeff) |
+				  NVVAL(NVC57D, HEAD_SET_OUTPUT_SCALER_COEFF_VALUE, INDEX, idx));
+		}
 	}
 
 	core->assign_windows = true;

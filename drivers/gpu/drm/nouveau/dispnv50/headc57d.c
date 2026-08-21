@@ -206,7 +206,8 @@ headc57d_mode(struct nv50_head *head, struct nv50_head_atom *asyh)
 	const int i = head->base.index;
 	int ret;
 
-	if ((ret = PUSH_WAIT(push, 15)))
+	ret = PUSH_WAIT(push, 13);
+	if (ret)
 		return ret;
 
 	PUSH_MTHD(push, NVC57D, HEAD_SET_RASTER_SIZE(i),
@@ -235,18 +236,63 @@ headc57d_mode(struct nv50_head *head, struct nv50_head_atom *asyh)
 	PUSH_MTHD(push, NVC57D, HEAD_SET_PIXEL_CLOCK_FREQUENCY_MAX(i),
 		  NVVAL(NVC57D, HEAD_SET_PIXEL_CLOCK_FREQUENCY_MAX, HERTZ, m->clock * 1000));
 
-	/*XXX: HEAD_USAGE_BOUNDS, doesn't belong here. */
+	return 0;
+}
+
+static int
+headc57d_view(struct nv50_head *head, struct nv50_head_atom *asyh)
+{
+	struct nvif_push *push = &nv50_disp(head->base.base.dev)->core->chan.push;
+	const int i = head->base.index;
+	int ret;
+
+	ret = PUSH_WAIT(push, 14);
+	if (ret)
+		return ret;
+
+	PUSH_MTHD(push, NVC57D, HEAD_SET_VIEWPORT_SIZE_IN(i),
+		  NVVAL(NVC57D, HEAD_SET_VIEWPORT_SIZE_IN, WIDTH, asyh->view.iW) |
+		  NVVAL(NVC57D, HEAD_SET_VIEWPORT_SIZE_IN, HEIGHT, asyh->view.iH));
+
+	PUSH_MTHD(push, NVC57D, HEAD_SET_VIEWPORT_SIZE_OUT(i),
+		  NVVAL(NVC57D, HEAD_SET_VIEWPORT_SIZE_OUT, WIDTH, asyh->view.oW) |
+		  NVVAL(NVC57D, HEAD_SET_VIEWPORT_SIZE_OUT, HEIGHT, asyh->view.oH));
+	/* Firmware may leave nonzero viewport offsets. Clear them to match
+	 * the centered viewport used by validation.
+	 */
+	PUSH_MTHD(push, NVC57D, HEAD_SET_VIEWPORT_POINT_IN(i), 0x00000000);
+	PUSH_MTHD(push, NVC57D, HEAD_SET_VIEWPORT_POINT_OUT_ADJUST(i), 0x00000000);
+
+	/* Program the taps and bounds with the viewport so hardware uses
+	 * the configuration that passed validation.
+	 */
+	PUSH_MTHD(push, NVC57D, HEAD_SET_CONTROL_OUTPUT_SCALER(i),
+		  (asyh->view.vtaps == 5 ?
+		   NVDEF(NVC57D, HEAD_SET_CONTROL_OUTPUT_SCALER, VERTICAL_TAPS, TAPS_5) :
+		   NVDEF(NVC57D, HEAD_SET_CONTROL_OUTPUT_SCALER, VERTICAL_TAPS, TAPS_2)) |
+		  (asyh->view.htaps == 5 ?
+		   NVDEF(NVC57D, HEAD_SET_CONTROL_OUTPUT_SCALER, HORIZONTAL_TAPS, TAPS_5) :
+		   NVDEF(NVC57D, HEAD_SET_CONTROL_OUTPUT_SCALER, HORIZONTAL_TAPS, TAPS_2)));
+
+	PUSH_MTHD(push, NVC57D, HEAD_SET_MAX_OUTPUT_SCALE_FACTOR(i),
+		  NVVAL(NVC57D, HEAD_SET_MAX_OUTPUT_SCALE_FACTOR, HORIZONTAL, asyh->view.max_h) |
+		  NVVAL(NVC57D, HEAD_SET_MAX_OUTPUT_SCALE_FACTOR, VERTICAL, asyh->view.max_v));
+
 	PUSH_MTHD(push, NVC57D, HEAD_SET_HEAD_USAGE_BOUNDS(i),
 		  NVDEF(NVC57D, HEAD_SET_HEAD_USAGE_BOUNDS, CURSOR, USAGE_W256_H256) |
 		  NVDEF(NVC57D, HEAD_SET_HEAD_USAGE_BOUNDS, OLUT_ALLOWED, TRUE) |
-		  NVDEF(NVC57D, HEAD_SET_HEAD_USAGE_BOUNDS, OUTPUT_SCALER_TAPS, TAPS_2) |
-		  NVDEF(NVC57D, HEAD_SET_HEAD_USAGE_BOUNDS, UPSCALING_ALLOWED, TRUE));
+		  (asyh->view.vtaps == 5 ?
+		   NVDEF(NVC57D, HEAD_SET_HEAD_USAGE_BOUNDS, OUTPUT_SCALER_TAPS, TAPS_5) :
+		   NVDEF(NVC57D, HEAD_SET_HEAD_USAGE_BOUNDS, OUTPUT_SCALER_TAPS, TAPS_2)) |
+		  (asyh->view.upscale_v ?
+		   NVDEF(NVC57D, HEAD_SET_HEAD_USAGE_BOUNDS, UPSCALING_ALLOWED, TRUE) :
+		   NVDEF(NVC57D, HEAD_SET_HEAD_USAGE_BOUNDS, UPSCALING_ALLOWED, FALSE)));
 	return 0;
 }
 
 const struct nv50_head_func
 headc57d = {
-	.view = headc37d_view,
+	.view = headc57d_view,
 	.mode = headc57d_mode,
 	.olut = headc57d_olut,
 	.ilut_check = head907d_ilut_check,

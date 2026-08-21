@@ -58,6 +58,7 @@ static int
 coreca7d_init(struct nv50_core *core)
 {
 	struct nvif_push *push = &core->chan.push;
+	unsigned long head_mask = core->disp->disp->head_mask;
 	const u32 windows = 8, heads = 4;
 	int ret, i;
 
@@ -93,6 +94,25 @@ coreca7d_init(struct nv50_core *core)
 		PUSH_MTHD(push, NVCA7D, HEAD_SET_TILE_MASK(i), BIT(i));
 
 		PUSH_MTHD(push, NVCA7D, TILE_SET_TILE_SIZE(i), 0);
+	}
+
+	/* CA7D uses the same five-tap coefficient table as C57D. */
+	for_each_set_bit(i, &head_mask, 8) {
+		int idx;
+
+		ret = PUSH_WAIT(push, 3 * 16 * 4 * 2);
+		if (ret)
+			return ret;
+
+		/* The index encodes ratio << 6 | phase << 2 | coefficient. */
+		for (idx = 0; idx < 3 * 16 * 4; idx++) {
+			const s16 coeff =
+				corec57d_taps5_coeff[idx >> 6][(idx >> 2) & 15][idx & 3];
+
+			PUSH_MTHD(push, NVCA7D, HEAD_SET_OUTPUT_SCALER_COEFF_VALUE(i),
+				  NVVAL(NVCA7D, HEAD_SET_OUTPUT_SCALER_COEFF_VALUE, DATA, coeff) |
+				  NVVAL(NVCA7D, HEAD_SET_OUTPUT_SCALER_COEFF_VALUE, INDEX, idx));
+		}
 	}
 
 	core->assign_windows = true;

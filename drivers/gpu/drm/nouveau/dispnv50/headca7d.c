@@ -274,9 +274,11 @@ headca7d_view(struct nv50_head *head, struct nv50_head_atom *asyh)
 {
 	struct nvif_push *push = &head->disp->core->chan.push;
 	const int i = head->base.index;
+	const bool scale = asyh->view.iW != asyh->view.oW ||
+			   asyh->view.iH != asyh->view.oH;
 	int ret;
 
-	ret = PUSH_WAIT(push, 4);
+	ret = PUSH_WAIT(push, 18);
 	if (ret)
 		return ret;
 
@@ -287,6 +289,47 @@ headca7d_view(struct nv50_head *head, struct nv50_head_atom *asyh)
 	PUSH_MTHD(push, NVCA7D, HEAD_SET_VIEWPORT_SIZE_OUT(i),
 		  NVVAL(NVCA7D, HEAD_SET_VIEWPORT_SIZE_OUT, WIDTH, asyh->view.oW) |
 		  NVVAL(NVCA7D, HEAD_SET_VIEWPORT_SIZE_OUT, HEIGHT, asyh->view.oH));
+	/* Firmware may leave nonzero viewport offsets. Clear them to match
+	 * the centered viewport used by validation.
+	 */
+	PUSH_MTHD(push, NVCA7D, HEAD_SET_VIEWPORT_POINT_IN(i), 0x00000000);
+	PUSH_MTHD(push, NVCA7D, HEAD_SET_VIEWPORT_POINT_OUT_ADJUST(i), 0x00000000);
+
+	/* Program the taps and bounds with the viewport so hardware uses
+	 * the configuration that passed validation.
+	 */
+	PUSH_MTHD(push, NVCA7D, HEAD_SET_CONTROL_OUTPUT_SCALER(i),
+		  (asyh->view.vtaps == 5 ?
+		   NVDEF(NVCA7D, HEAD_SET_CONTROL_OUTPUT_SCALER, VERTICAL_TAPS, TAPS_5) :
+		   NVDEF(NVCA7D, HEAD_SET_CONTROL_OUTPUT_SCALER, VERTICAL_TAPS, TAPS_2)) |
+		  (asyh->view.htaps == 5 ?
+		   NVDEF(NVCA7D, HEAD_SET_CONTROL_OUTPUT_SCALER, HORIZONTAL_TAPS, TAPS_5) :
+		   NVDEF(NVCA7D, HEAD_SET_CONTROL_OUTPUT_SCALER, HORIZONTAL_TAPS, TAPS_2)));
+
+	PUSH_MTHD(push, NVCA7D, HEAD_SET_MAX_OUTPUT_SCALE_FACTOR(i),
+		  NVVAL(NVCA7D, HEAD_SET_MAX_OUTPUT_SCALE_FACTOR, HORIZONTAL, asyh->view.max_h) |
+		  NVVAL(NVCA7D, HEAD_SET_MAX_OUTPUT_SCALE_FACTOR, VERTICAL, asyh->view.max_v));
+
+	PUSH_MTHD(push, NVCA7D, HEAD_SET_HEAD_USAGE_BOUNDS(i),
+		  NVDEF(NVCA7D, HEAD_SET_HEAD_USAGE_BOUNDS, CURSOR, USAGE_W256_H256) |
+		  NVDEF(NVCA7D, HEAD_SET_HEAD_USAGE_BOUNDS, OLUT_ALLOWED, TRUE) |
+		  (asyh->view.vtaps == 5 ?
+		   NVDEF(NVCA7D, HEAD_SET_HEAD_USAGE_BOUNDS, OUTPUT_SCALER_TAPS, TAPS_5) :
+		   NVDEF(NVCA7D, HEAD_SET_HEAD_USAGE_BOUNDS, OUTPUT_SCALER_TAPS, TAPS_2)) |
+		  (asyh->view.upscale_v ?
+		   NVDEF(NVCA7D, HEAD_SET_HEAD_USAGE_BOUNDS, UPSCALING_ALLOWED, TRUE) :
+		   NVDEF(NVCA7D, HEAD_SET_HEAD_USAGE_BOUNDS, UPSCALING_ALLOWED, FALSE)));
+
+	/* The postcomp scaler needs fixed-point samples between RGB2ITP and
+	 * ITP2RGB. Enable their FVLUTs while scaling, otherwise FP16 bit patterns
+	 * are interpreted as fixed point and corrupt the output.
+	 */
+	PUSH_MTHD(push, NVCA7D, HEAD_SET_RGB2ITP_CONTROL(i), scale ?
+		  NVDEF(NVCA7D, HEAD_SET_RGB2ITP_CONTROL, ENABLE_FVLUT, ENABLE) |
+		  NVDEF(NVCA7D, HEAD_SET_RGB2ITP_CONTROL, FVLUT_INTERPOLATE, ENABLE) : 0);
+	PUSH_MTHD(push, NVCA7D, HEAD_SET_ITP2RGB_CONTROL(i), scale ?
+		  NVDEF(NVCA7D, HEAD_SET_ITP2RGB_CONTROL, ENABLE_FVLUT, ENABLE) |
+		  NVDEF(NVCA7D, HEAD_SET_ITP2RGB_CONTROL, FVLUT_INTERPOLATE, ENABLE) : 0);
 	return 0;
 }
 

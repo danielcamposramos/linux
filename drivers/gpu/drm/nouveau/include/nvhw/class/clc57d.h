@@ -237,6 +237,16 @@
 #define NVC57D_HEAD_SET_PIXEL_CLOCK_FREQUENCY_MAX_ADJ1000DIV1001                31:31
 #define NVC57D_HEAD_SET_PIXEL_CLOCK_FREQUENCY_MAX_ADJ1000DIV1001_FALSE          (0x00000000)
 #define NVC57D_HEAD_SET_PIXEL_CLOCK_FREQUENCY_MAX_ADJ1000DIV1001_TRUE           (0x00000001)
+#define NVC57D_HEAD_SET_CONTROL_OUTPUT_SCALER(a)                                (0x00002014 + (a)*0x00000400)
+#define NVC57D_HEAD_SET_CONTROL_OUTPUT_SCALER_VERTICAL_TAPS                     2:0
+#define NVC57D_HEAD_SET_CONTROL_OUTPUT_SCALER_VERTICAL_TAPS_TAPS_2              (0x00000001)
+#define NVC57D_HEAD_SET_CONTROL_OUTPUT_SCALER_VERTICAL_TAPS_TAPS_5              (0x00000004)
+#define NVC57D_HEAD_SET_CONTROL_OUTPUT_SCALER_HORIZONTAL_TAPS                   6:4
+#define NVC57D_HEAD_SET_CONTROL_OUTPUT_SCALER_HORIZONTAL_TAPS_TAPS_2            (0x00000001)
+#define NVC57D_HEAD_SET_CONTROL_OUTPUT_SCALER_HORIZONTAL_TAPS_TAPS_5            (0x00000004)
+#define NVC57D_HEAD_SET_MAX_OUTPUT_SCALE_FACTOR(a)                              (0x0000202C + (a)*0x00000400)
+#define NVC57D_HEAD_SET_MAX_OUTPUT_SCALE_FACTOR_HORIZONTAL                      15:0
+#define NVC57D_HEAD_SET_MAX_OUTPUT_SCALE_FACTOR_VERTICAL                        31:16
 #define NVC57D_HEAD_SET_HEAD_USAGE_BOUNDS(a)                                    (0x00002030 + (a)*0x00000400)
 #define NVC57D_HEAD_SET_HEAD_USAGE_BOUNDS_CURSOR                                2:0
 #define NVC57D_HEAD_SET_HEAD_USAGE_BOUNDS_CURSOR_USAGE_NONE                     (0x00000000)
@@ -253,6 +263,18 @@
 #define NVC57D_HEAD_SET_HEAD_USAGE_BOUNDS_UPSCALING_ALLOWED                     8:8
 #define NVC57D_HEAD_SET_HEAD_USAGE_BOUNDS_UPSCALING_ALLOWED_FALSE               (0x00000000)
 #define NVC57D_HEAD_SET_HEAD_USAGE_BOUNDS_UPSCALING_ALLOWED_TRUE                (0x00000001)
+#define NVC57D_HEAD_SET_VIEWPORT_POINT_IN(a)                                    (0x00002048 + (a)*0x00000400)
+#define NVC57D_HEAD_SET_VIEWPORT_POINT_IN_X                                     14:0
+#define NVC57D_HEAD_SET_VIEWPORT_POINT_IN_Y                                     30:16
+#define NVC57D_HEAD_SET_VIEWPORT_SIZE_IN(a)                                     (0x0000204C + (a)*0x00000400)
+#define NVC57D_HEAD_SET_VIEWPORT_SIZE_IN_WIDTH                                  14:0
+#define NVC57D_HEAD_SET_VIEWPORT_SIZE_IN_HEIGHT                                 30:16
+#define NVC57D_HEAD_SET_VIEWPORT_SIZE_OUT(a)                                    (0x00002058 + (a)*0x00000400)
+#define NVC57D_HEAD_SET_VIEWPORT_SIZE_OUT_WIDTH                                 14:0
+#define NVC57D_HEAD_SET_VIEWPORT_SIZE_OUT_HEIGHT                                30:16
+#define NVC57D_HEAD_SET_VIEWPORT_POINT_OUT_ADJUST(a)                            (0x0000205C + (a)*0x00000400)
+#define NVC57D_HEAD_SET_VIEWPORT_POINT_OUT_ADJUST_X                             15:0
+#define NVC57D_HEAD_SET_VIEWPORT_POINT_OUT_ADJUST_Y                             31:16
 #define NVC57D_HEAD_SET_RASTER_SIZE(a)                                          (0x00002064 + (a)*0x00000400)
 #define NVC57D_HEAD_SET_RASTER_SIZE_WIDTH                                       14:0
 #define NVC57D_HEAD_SET_RASTER_SIZE_HEIGHT                                      30:16
@@ -334,6 +356,9 @@
 #define NVC57D_HEAD_SET_CRC_CONTROL_CRC_DURING_SNOOZE                           9:9
 #define NVC57D_HEAD_SET_CRC_CONTROL_CRC_DURING_SNOOZE_DISABLE                   (0x00000000)
 #define NVC57D_HEAD_SET_CRC_CONTROL_CRC_DURING_SNOOZE_ENABLE                    (0x00000001)
+#define NVC57D_HEAD_SET_OUTPUT_SCALER_COEFF_VALUE(a)                            (0x00002214 + (a)*0x00000400)
+#define NVC57D_HEAD_SET_OUTPUT_SCALER_COEFF_VALUE_DATA                          9:0
+#define NVC57D_HEAD_SET_OUTPUT_SCALER_COEFF_VALUE_INDEX                         19:12
 #define NVC57D_HEAD_SET_OLUT_CONTROL(a)                                         (0x00002280 + (a)*0x00000400)
 #define NVC57D_HEAD_SET_OLUT_CONTROL_INTERPOLATE                                0:0
 #define NVC57D_HEAD_SET_OLUT_CONTROL_INTERPOLATE_DISABLE                        (0x00000000)

@@ -1154,6 +1154,18 @@ nv50_mstc_mode_valid(struct drm_connector *connector,
 	struct nv50_mstc *mstc = nv50_mstc(connector);
 	struct nouveau_encoder *outp = mstc->mstm->outp;
 
+	/* Reject modes exceeding the postcomp viewport limit where scaler
+	 * limits are enforced. Atomic check applies the same limit.
+	 */
+	if (nouveau_display(connector->dev)->scaler_limits) {
+		const u16 max = nouveau_display(connector->dev)->max_viewport;
+
+		if (mode->hdisplay > max)
+			return MODE_BAD_HVALUE;
+		if (mode->vdisplay > max)
+			return MODE_BAD_VVALUE;
+	}
+
 	/* TODO: calculate the PBN from the dotclock and validate against the
 	 * MSTB's max possible PBN
 	 */
