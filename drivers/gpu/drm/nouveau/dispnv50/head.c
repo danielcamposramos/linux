@@ -50,6 +50,12 @@ nv50_head_flush_clr(struct nv50_head *head,
 	if (clr.olut) head->func->olut_clr(head);
 	if (clr.core) head->func->core_clr(head);
 	if (clr.curs) head->func->curs_clr(head);
+	/* The hardware requires separate detach and attach updates when ownership
+	 * moves between heads. With flush_disable, clear the masks in the early
+	 * update that also detaches the OR, before another head can acquire them.
+	 */
+	if (clr.mtc && head->func->mtc_clr)
+		head->func->mtc_clr(head);
 }
 
 void
@@ -72,6 +78,8 @@ nv50_head_flush_set(struct nv50_head *head, struct nv50_head_atom *asyh)
 
 	if (asyh->set.view   ) head->func->view    (head, asyh);
 	if (asyh->set.mode   ) head->func->mode    (head, asyh);
+	if (asyh->set.mtc && head->func->mtc_set)
+		head->func->mtc_set(head, asyh);
 	if (asyh->set.core   ) head->func->core_set(head, asyh);
 	if (asyh->set.base   ) head->func->base    (head, asyh);
 	if (asyh->set.ovly   ) head->func->ovly    (head, asyh);
@@ -399,6 +407,9 @@ nv50_head_atomic_check_mode(struct nv50_head *head, struct nv50_head_atom *asyh)
 	asyh->or.nhsync = !!(mode->flags & DRM_MODE_FLAG_NHSYNC);
 	asyh->or.nvsync = !!(mode->flags & DRM_MODE_FLAG_NVSYNC);
 	asyh->set.or = head->func->or != NULL;
+	/* Tile sizes depend on the timings, so program them with every modeset.
+	 */
+	asyh->set.mtc = head->func->mtc_set != NULL;
 	asyh->set.mode = true;
 }
 
@@ -482,6 +493,10 @@ nv50_head_atomic_check(struct drm_crtc *crtc, struct drm_atomic_commit *state)
 		asyh->curs.visible = false;
 		asyh->base.cpp = 0;
 		asyh->ovly.cpp = 0;
+		/* Discard the masks on disable because another head may acquire these
+		 * resources before this head is enabled again.
+		 */
+		memset(&asyh->mtc, 0, sizeof(asyh->mtc));
 	}
 
 	if (!drm_atomic_crtc_needs_modeset(&asyh->state)) {
@@ -512,6 +527,7 @@ nv50_head_atomic_check(struct drm_crtc *crtc, struct drm_atomic_commit *state)
 		asyh->clr.olut = armh->olut.visible;
 		asyh->clr.core = armh->core.visible;
 		asyh->clr.curs = armh->curs.visible;
+		asyh->clr.mtc  = armh->mtc.tiles_mask != 0;
 		asyh->set.olut = asyh->olut.visible;
 		asyh->set.core = asyh->core.visible;
 		asyh->set.curs = asyh->curs.visible;
@@ -562,6 +578,7 @@ nv50_head_atomic_duplicate_state(struct drm_crtc *crtc)
 	asyh->crc = armh->crc;
 	asyh->or = armh->or;
 	asyh->dp = armh->dp;
+	asyh->mtc = armh->mtc;
 	asyh->clr.mask = 0;
 	asyh->set.mask = 0;
 	return &asyh->state;

@@ -333,6 +333,74 @@ headca7d_view(struct nv50_head *head, struct nv50_head_atom *asyh)
 	return 0;
 }
 
+static int
+headca7d_mtc_clr(struct nv50_head *head)
+{
+	struct nvif_push *push = &head->disp->core->chan.push;
+	const int i = head->base.index;
+	int ret;
+
+	ret = PUSH_WAIT(push, 6);
+	if (ret)
+		return ret;
+
+	PUSH_MTHD(push, NVCA7D, HEAD_SET_TILE_MASK(i), 0x00000000);
+	PUSH_MTHD(push, NVCA7D, WINDOW_SET_PHYSICAL(i * 2), 0x00000000);
+	PUSH_MTHD(push, NVCA7D, WINDOW_SET_PHYSICAL(i * 2 + 1), 0x00000000);
+
+	return 0;
+}
+
+/* Use NVKMS's non-DSC tile split: round up the width of each tile except
+ * the last, which takes the remainder so the slices cover hactive exactly.
+ */
+static int
+headca7d_mtc_set(struct nv50_head *head, struct nv50_head_atom *asyh)
+{
+	struct nvif_push *push = &head->disp->core->chan.push;
+	const u32 hactive = asyh->mode.h.blanks - asyh->mode.h.blanke;
+	const int i = head->base.index;
+	unsigned long tiles_mask;
+	u32 start = 0, idx = 0, tiles, tile;
+	int ret;
+
+	/* Keep the hardware's identity mapping while no allocator supplies masks:
+	 * tile n to head n and phywin n to window n.
+	 */
+	if (!asyh->mtc.tiles_mask) {
+		asyh->mtc.tiles_mask = BIT(i);
+		asyh->mtc.phywins_mask[0] = BIT(i * 2);
+		asyh->mtc.phywins_mask[1] = BIT(i * 2 + 1);
+	}
+
+	tiles_mask = asyh->mtc.tiles_mask;
+	tiles = hweight8(asyh->mtc.tiles_mask);
+
+	ret = PUSH_WAIT(push, 6 + tiles * 2);
+	if (ret)
+		return ret;
+
+	PUSH_MTHD(push, NVCA7D, HEAD_SET_TILE_MASK(i), asyh->mtc.tiles_mask);
+	PUSH_MTHD(push, NVCA7D, WINDOW_SET_PHYSICAL(i * 2),
+		  asyh->mtc.phywins_mask[0]);
+	PUSH_MTHD(push, NVCA7D, WINDOW_SET_PHYSICAL(i * 2 + 1),
+		  asyh->mtc.phywins_mask[1]);
+
+	for_each_set_bit(tile, &tiles_mask, 8) {
+		const u32 width = (idx < tiles - 1) ?
+			DIV_ROUND_UP(hactive, tiles) : hactive - start;
+
+		PUSH_MTHD(push, NVCA7D, TILE_SET_TILE_SIZE(tile),
+			  NVVAL(NVCA7D, TILE_SET_TILE_SIZE, START, start) |
+			  NVVAL(NVCA7D, TILE_SET_TILE_SIZE, WIDTH, width));
+
+		start += width;
+		idx++;
+	}
+
+	return 0;
+}
+
 const struct nv50_head_func
 headca7d = {
 	.view = headca7d_view,
@@ -352,4 +420,6 @@ headca7d = {
 	.or = headca7d_or,
 	.static_wndw_map = headc37d_static_wndw_map,
 	.display_id = headca7d_display_id,
+	.mtc_set = headca7d_mtc_set,
+	.mtc_clr = headca7d_mtc_clr,
 };
