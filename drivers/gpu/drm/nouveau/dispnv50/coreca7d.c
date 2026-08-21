@@ -103,7 +103,7 @@ static const struct nv50_core_func
 coreca7d = {
 	.init = coreca7d_init,
 	.ntfy_init = corec37d_ntfy_init,
-	.caps_init = corec37d_caps_init,
+	.caps_init = corec57d_caps_init,
 	.caps_class = GB202_DISP_CAPS,
 	.ntfy_wait_done = corec37d_ntfy_wait_done,
 	.update = coreca7d_update,

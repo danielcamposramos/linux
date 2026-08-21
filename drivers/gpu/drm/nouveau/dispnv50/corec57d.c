@@ -26,6 +26,64 @@
 #include <nvif/pushc37b.h>
 
 #include <nvhw/class/clc57d.h>
+#include <nvhw/class/clc573.h>
+
+int
+corec57d_caps_init(struct nouveau_drm *drm, struct nv50_disp *disp)
+{
+	u32 syscap;
+	int i, ret;
+
+	ret = corec37d_caps_init(drm, disp);
+	if (ret)
+		return ret;
+
+	/* Two taps support up to 2x downscaling, while the five-tap limit is
+	 * either 2x or 4x. Read the per-tap line-store widths as well, since
+	 * they bound vertical filtering independently of the scale ratio. On
+	 * GB20x these offsets belong to tiles, so head i uses tile i's caps.
+	 */
+	syscap = nvif_rd32(&disp->caps, NVC573_SYS_CAP);
+	for (i = 0; i < NVC573_SYS_CAP_HEAD_EXISTS__SIZE_1; i++) {
+		struct nv50_scaler_caps *scaler;
+		u32 capa, capc, capd;
+
+		if (!NVDEF_TEST(syscap, NVC573, SYS_CAP, HEAD_EXISTS, i, ==, YES))
+			continue;
+
+		capa = nvif_rd32(&disp->caps, NVC573_POSTCOMP_HEAD_HDR_CAPA(i));
+		if (!NVDEF_TEST(capa, NVC573, POSTCOMP_HEAD_HDR_CAPA,
+				SCLR_PRESENT, ==, TRUE))
+			continue;
+
+		capc = nvif_rd32(&disp->caps, NVC573_POSTCOMP_HEAD_HDR_CAPC(i));
+		capd = nvif_rd32(&disp->caps, NVC573_POSTCOMP_HEAD_HDR_CAPD(i));
+
+		scaler = &disp->scaler[i];
+		scaler->taps2.max_h = 0x800;
+		scaler->taps2.max_v = 0x800;
+		scaler->taps2.max_pixels =
+			NVVAL_GET(capd, NVC573, POSTCOMP_HEAD_HDR_CAPD,
+				  VSCLR_MAX_PIXELS_2TAP);
+		scaler->taps5.max_h =
+			NVDEF_TEST(capc, NVC573, POSTCOMP_HEAD_HDR_CAPC,
+				   SCLR_HS_MAX_SCALE_FACTOR, ==, 4X) ?
+				0x1000 : 0x800;
+		scaler->taps5.max_v =
+			NVDEF_TEST(capc, NVC573, POSTCOMP_HEAD_HDR_CAPC,
+				   SCLR_VS_MAX_SCALE_FACTOR, ==, 4X) ?
+				0x1000 : 0x800;
+		scaler->taps5.max_pixels =
+			NVVAL_GET(capd, NVC573, POSTCOMP_HEAD_HDR_CAPD,
+				  VSCLR_MAX_PIXELS_5TAP);
+
+		NV_DEBUG(drm, "disp: head-%d scaler: 5-tap %ux max %u px, 2-tap %u px\n",
+			 i, scaler->taps5.max_v >> 10, scaler->taps5.max_pixels,
+			 scaler->taps2.max_pixels);
+	}
+
+	return 0;
+}
 
 static int
 corec57d_init(struct nv50_core *core)
@@ -63,7 +121,7 @@ static const struct nv50_core_func
 corec57d = {
 	.init = corec57d_init,
 	.ntfy_init = corec37d_ntfy_init,
-	.caps_init = corec37d_caps_init,
+	.caps_init = corec57d_caps_init,
 	.caps_class = GV100_DISP_CAPS,
 	.ntfy_wait_done = corec37d_ntfy_wait_done,
 	.update = corec37d_update,

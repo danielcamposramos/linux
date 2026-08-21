@@ -14,6 +14,18 @@ struct nv50_disp {
 	struct nv50_core *core;
 	struct nvif_object caps;
 
+	/* Turing+ output scaler limits, zero for heads without a scaler.
+	 * Downscale factors are input/output * 0x400, while max_pixels limits
+	 * the width of vertical filtering at each tap count.
+	 */
+	struct nv50_scaler_caps {
+		struct nv50_scaler_taps_caps {
+			u16 max_pixels;
+			u16 max_h;
+			u16 max_v;
+		} taps2, taps5;
+	} scaler[8];
+
 #define NV50_DISP_SYNC(c, o)                                ((c) * 0x040 + (o))
 #define NV50_DISP_CORE_NTFY                       NV50_DISP_SYNC(0      , 0x00)
 #define NV50_DISP_WNDW_SEM0(c)                    NV50_DISP_SYNC(1 + (c), 0x00)
