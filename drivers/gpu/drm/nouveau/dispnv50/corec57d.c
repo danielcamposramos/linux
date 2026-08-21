@@ -24,6 +24,7 @@
 
 #include <nvif/class.h>
 #include <nvif/pushc37b.h>
+#include <nvif/if0010.h>
 
 #include <nvhw/class/clc57d.h>
 #include <nvhw/class/clc573.h>
@@ -116,6 +117,46 @@ const s16 corec57d_taps5_coeff[3][16][4] = {
 	  {   0,  25, 102,  22 } },
 };
 
+int
+corec57d_wndw_usage_bounds(struct nv50_core *core, int wndw, u8 formats,
+			   u16 fetch)
+{
+	struct nvif_push *push = &core->chan.push;
+	int ret;
+
+	ret = PUSH_WAIT(push, 6);
+	if (ret)
+		return ret;
+
+	/* Keep LUTs allowed and input scaling at 1:1 as in OpenRM's default
+	 * window bounds, while format and fetch bounds follow plane usage.
+	 */
+	PUSH_MTHD(push, NVC57D, WINDOW_SET_WINDOW_FORMAT_USAGE_BOUNDS(wndw),
+		  NVVAL(NVC57D, WINDOW_SET_WINDOW_FORMAT_USAGE_BOUNDS, RGB_PACKED1BPP,
+			!!(formats & NVIF_DISP_IMP_FORMAT_RGB_PACKED_1_BPP)) |
+		  NVVAL(NVC57D, WINDOW_SET_WINDOW_FORMAT_USAGE_BOUNDS, RGB_PACKED2BPP,
+			!!(formats & NVIF_DISP_IMP_FORMAT_RGB_PACKED_2_BPP)) |
+		  NVVAL(NVC57D, WINDOW_SET_WINDOW_FORMAT_USAGE_BOUNDS, RGB_PACKED4BPP,
+			!!(formats & NVIF_DISP_IMP_FORMAT_RGB_PACKED_4_BPP)) |
+		  NVVAL(NVC57D, WINDOW_SET_WINDOW_FORMAT_USAGE_BOUNDS, RGB_PACKED8BPP,
+			!!(formats & NVIF_DISP_IMP_FORMAT_RGB_PACKED_8_BPP)) |
+		  NVVAL(NVC57D, WINDOW_SET_WINDOW_FORMAT_USAGE_BOUNDS, YUV_PACKED422,
+			!!(formats & NVIF_DISP_IMP_FORMAT_YUV_PACKED_422)));
+
+	PUSH_MTHD(push, NVC57D, WINDOW_SET_WINDOW_USAGE_BOUNDS(wndw),
+		  NVVAL(NVC57D, WINDOW_SET_WINDOW_USAGE_BOUNDS,
+			MAX_PIXELS_FETCHED_PER_LINE, fetch) |
+		  NVDEF(NVC57D, WINDOW_SET_WINDOW_USAGE_BOUNDS, ILUT_ALLOWED, TRUE) |
+		  NVDEF(NVC57D, WINDOW_SET_WINDOW_USAGE_BOUNDS, TMO_LUT_ALLOWED, TRUE) |
+		  NVDEF(NVC57D, WINDOW_SET_WINDOW_USAGE_BOUNDS, INPUT_SCALER_TAPS, TAPS_2) |
+		  NVDEF(NVC57D, WINDOW_SET_WINDOW_USAGE_BOUNDS, UPSCALING_ALLOWED, FALSE));
+
+	PUSH_MTHD(push, NVC57D, WINDOW_SET_MAX_INPUT_SCALE_FACTOR(wndw),
+		  NVVAL(NVC57D, WINDOW_SET_MAX_INPUT_SCALE_FACTOR, HORIZONTAL, 0x400) |
+		  NVVAL(NVC57D, WINDOW_SET_MAX_INPUT_SCALE_FACTOR, VERTICAL, 0x400));
+	return 0;
+}
+
 static int
 corec57d_init(struct nv50_core *core)
 {
@@ -141,6 +182,7 @@ corec57d_init(struct nv50_core *core)
 		PUSH_MTHD(push, NVC57D, WINDOW_SET_WINDOW_USAGE_BOUNDS(i),
 			  NVVAL(NVC57D, WINDOW_SET_WINDOW_USAGE_BOUNDS, MAX_PIXELS_FETCHED_PER_LINE, 0x7fff) |
 			  NVDEF(NVC57D, WINDOW_SET_WINDOW_USAGE_BOUNDS, ILUT_ALLOWED, TRUE) |
+			  NVDEF(NVC57D, WINDOW_SET_WINDOW_USAGE_BOUNDS, TMO_LUT_ALLOWED, TRUE) |
 			  NVDEF(NVC57D, WINDOW_SET_WINDOW_USAGE_BOUNDS, INPUT_SCALER_TAPS, TAPS_2) |
 			  NVDEF(NVC57D, WINDOW_SET_WINDOW_USAGE_BOUNDS, UPSCALING_ALLOWED, FALSE));
 	}
@@ -177,6 +219,7 @@ corec57d = {
 	.ntfy_wait_done = corec37d_ntfy_wait_done,
 	.update = corec37d_update,
 	.wndw.owner = corec37d_wndw_owner,
+	.wndw.usage_bounds = corec57d_wndw_usage_bounds,
 	.head = &headc57d,
 	.sor = &sorc37d,
 #if IS_ENABLED(CONFIG_DEBUG_FS)

@@ -146,12 +146,17 @@ struct nv50_head_atom {
 		u32 phywins_mask[2];	/* windows head * 2 + n */
 	} mtc;
 
-	/* Negotiated NVIF_DISP_IMP_FORMAT_* bounds constrain the formats
-	 * allowed in later flips.
+	/* Negotiated NVIF_DISP_IMP_FORMAT_* bounds limit later flips, while
+	 * prog records the format masks and fetch widths programmed for
+	 * current plane usage.
 	 */
 	struct {
 		u8 wndw_formats[2];
 		bool valid;
+		struct {
+			u8 formats[2];
+			u16 fetch[2];
+		} prog;
 	} imp;
 
 	union nv50_head_atom_mask {
@@ -168,6 +173,7 @@ struct nv50_head_atom {
 			bool crc:1;
 			bool or:1;
 			bool mtc:1;
+			bool imp:1;
 		};
 		u16 mask;
 	} set, clr;

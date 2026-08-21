@@ -2356,6 +2356,27 @@ nv50_disp_atomic_commit_tail(struct drm_atomic_commit *state)
 		disp->tiles_pending = false;
 	}
 
+	/* Clear non-inherited windows once in this core update. A retry would
+	 * reuse the init mask and could clear windows enabled by an
+	 * intervening commit.
+	 */
+	if (disp->wndw_park_pending && atom->lock_core &&
+	    core->func->wndw.usage_bounds) {
+		unsigned long wndws = disp->wndw_park;
+		int w, ret = 0;
+
+		for_each_set_bit(w, &wndws, NV50_DISP_INIT_WNDWS) {
+			ret = core->func->wndw.usage_bounds(core, w, 0, 0);
+			if (ret)
+				break;
+		}
+		if (ret)
+			drm_warn(dev, "unused windows not parked\n");
+		else
+			interlock[NV50_DISP_INTERLOCK_CORE] |= 1;
+		disp->wndw_park_pending = false;
+	}
+
 	/* Disable head(s). */
 	for_each_oldnew_crtc_in_state(state, crtc, old_crtc_state, new_crtc_state, i) {
 		struct nv50_head_atom *asyh = nv50_head_atom(new_crtc_state);
@@ -2448,6 +2469,15 @@ nv50_disp_atomic_commit_tail(struct drm_atomic_commit *state)
 			  asyh->set.mask, asyh->clr.mask);
 
 		if (asyh->set.mask) {
+			if (asyh->set.imp && disp->core->func->wndw.usage_bounds) {
+				int w;
+
+				for (w = 0; w < 2; w++)
+					disp->core->func->wndw.usage_bounds(disp->core,
+						head->base.index * 2 + w,
+						asyh->imp.prog.formats[w],
+						asyh->imp.prog.fetch[w]);
+			}
 			nv50_head_flush_set(head, asyh);
 			interlock[NV50_DISP_INTERLOCK_CORE] = 1;
 		}
@@ -3047,6 +3077,16 @@ nv50_imp_ceiling(u8 class)
 	return (class << 1) - 1;
 }
 
+/* Use the input viewport plus filter and overfetch margins to bound the fetch
+ * width at 1:1 input scaling, matching OpenRM's
+ * nvGetMaxPixelsFetchedPerLine().
+ */
+static u16
+nv50_imp_fetch_width(const struct nv50_head_atom *asyh)
+{
+	return ((((u32)asyh->view.iW + 14) * 0x400 + 1023) >> 10) + 8;
+}
+
 /* Without negotiated bounds, retain the pre-IMP behavior of allowing all
  * formats.
  */
@@ -3110,6 +3150,7 @@ nv50_disp_atomic_check_imp(struct drm_device *dev, struct drm_atomic_commit *sta
 	u8 committed_tiles[8] = {};
 	u32 committed_phywins[8] = {};
 	u8 demand[8][2] = {}, bounds[8][2] = {};
+	u8 prog_seen[8] = {}, prog_class[8][2] = {};
 	u8 modeset_heads = 0;
 	struct drm_plane *plane;
 	struct drm_plane_state *new_plane_state;
@@ -3148,6 +3189,7 @@ nv50_disp_atomic_check_imp(struct drm_device *dev, struct drm_atomic_commit *sta
 		if (!static_wndw_map || wndw->id / 2 >= ARRAY_SIZE(demand))
 			continue;
 
+		prog_seen[wndw->id / 2] |= BIT(wndw->id & 1);
 		/* An enabled off-screen window still consumes resources, even
 		 * when DRM clears plane_state->visible. Use the window atom's
 		 * visibility instead.
@@ -3157,6 +3199,7 @@ nv50_disp_atomic_check_imp(struct drm_device *dev, struct drm_atomic_commit *sta
 			continue;
 
 		cls = nv50_imp_format_class(new_plane_state->fb);
+		prog_class[wndw->id / 2][wndw->id & 1] = cls;
 		demand[wndw->id / 2][wndw->id & 1] |= cls;
 	}
 
@@ -3181,6 +3224,50 @@ nv50_disp_atomic_check_imp(struct drm_device *dev, struct drm_atomic_commit *sta
 		}
 	}
 
+	/* Raise and lower usage bounds with the planes in the same interlocked
+	 * update. OpenRM instead raises them before a flip and lowers them
+	 * after the window channel idles.
+	 */
+	for_each_new_crtc_in_state(state, crtc, new_crtc_state, i) {
+		struct nv50_head_atom *asyh = nv50_head_atom(new_crtc_state);
+		const int head_idx = nv50_head(crtc)->base.index;
+
+		if (!disp->core->func->wndw.usage_bounds)
+			break;
+
+		for (w = 0; w < 2; w++) {
+			u8 formats = asyh->imp.prog.formats[w];
+			u16 fetch;
+
+			if (!new_crtc_state->active)
+				formats = 0;
+			else if (prog_seen[head_idx] & BIT(w))
+				formats = prog_class[head_idx][w] ?
+					nv50_imp_ceiling(prog_class[head_idx][w]) : 0;
+			else if (drm_atomic_crtc_needs_modeset(new_crtc_state))
+				/* A modeset includes every plane on the head,
+				 * so an unseen window is unused.
+				 */
+				formats = 0;
+			fetch = formats ? nv50_imp_fetch_width(asyh) : 0;
+
+			if (formats == asyh->imp.prog.formats[w] &&
+			    fetch == asyh->imp.prog.fetch[w])
+				continue;
+
+			asyh->imp.prog.formats[w] = formats;
+			asyh->imp.prog.fetch[w] = fetch;
+			asyh->set.imp = true;
+			/* Changing usage bounds writes the core channel and
+			 * therefore requires the core lock.
+			 */
+			nv50_atom(state)->lock_core = true;
+		}
+	}
+
+	/* Only modesets renegotiate bounds, so flips within committed bounds
+	 * need no query.
+	 */
 	if (!any_modeset)
 		return 0;
 
@@ -3795,6 +3882,44 @@ nv50_display_init(struct drm_device *dev, bool resume, bool runtime)
 
 	if (!resume)
 		nv50_display_read_hw_state(nouveau_drm(dev));
+
+	/* OpenRM clears window bounds at the first modeset after core
+	 * allocation. Preserve the initial bounds of inherited heads here
+	 * because they are already scanning out, seeding tracking so later
+	 * plane updates can replace them. No scanout is inherited on resume,
+	 * so all windows can be cleared before restore.
+	 */
+	if (core->func->wndw.usage_bounds) {
+		struct drm_crtc *crtc;
+		u32 park = GENMASK(NV50_DISP_INIT_WNDWS - 1, 0);
+
+		drm_for_each_crtc(crtc, dev) {
+			const bool inherited = !resume && !runtime &&
+					       crtc->state && crtc->state->active;
+			const int head_idx = nv50_head(crtc)->base.index;
+			struct nv50_head_atom *armh;
+			int w;
+
+			if (!crtc->state)
+				continue;
+
+			if (inherited)
+				park &= ~(BIT(head_idx * 2) | BIT(head_idx * 2 + 1));
+
+			armh = nv50_head_atom(crtc->state);
+			for (w = 0; w < 2; w++) {
+				armh->imp.prog.formats[w] = inherited ?
+					NVIF_DISP_IMP_FORMAT_RGB_PACKED_1_BPP |
+					NVIF_DISP_IMP_FORMAT_RGB_PACKED_2_BPP |
+					NVIF_DISP_IMP_FORMAT_RGB_PACKED_4_BPP |
+					NVIF_DISP_IMP_FORMAT_RGB_PACKED_8_BPP : 0;
+				armh->imp.prog.fetch[w] = inherited ? 0x7fff : 0;
+			}
+		}
+
+		disp->wndw_park = park;
+		disp->wndw_park_pending = park != 0;
+	}
 
 	if (core->func->tiles_init) {
 		struct drm_crtc *crtc;

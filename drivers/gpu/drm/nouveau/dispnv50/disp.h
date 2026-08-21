@@ -9,6 +9,9 @@
 struct nv50_msto;
 struct nouveau_encoder;
 
+/* Core init programs two windows per head slot, including unused slots. */
+#define NV50_DISP_INIT_WNDWS 8
+
 struct nv50_disp {
 	struct nvif_disp *disp;
 	struct nv50_core *core;
@@ -35,6 +38,13 @@ struct nv50_disp {
 	 */
 	u32 tiles_protect;
 	bool tiles_pending;
+
+	/* Windows whose init bounds can be cleared by the first commit holding
+	 * the core lock. Inherited heads are excluded so their scanout remains
+	 * provisioned.
+	 */
+	u32 wndw_park;
+	bool wndw_park_pending;
 
 	/* Turing+ output scaler limits, zero for heads without a scaler.
 	 * Downscale factors are input/output * 0x400, while max_pixels limits

@@ -32,6 +32,12 @@ struct nv50_core_func {
 
 	struct {
 		int (*owner)(struct nv50_core *);
+		/* Program a window's current format and fetch bounds, using
+		 * 0/0 to remove an unused window's fetch allocation. LUTs
+		 * remain allowed and input scaling stays at 1:1.
+		 */
+		int (*usage_bounds)(struct nv50_core *, int wndw, u8 formats,
+				    u16 fetch);
 	} wndw;
 
 	const struct nv50_head_func *head;
@@ -79,6 +85,7 @@ extern const struct nv50_outp_func sorc37d;
 
 int corec57d_caps_init(struct nouveau_drm *, struct nv50_disp *);
 extern const s16 corec57d_taps5_coeff[3][16][4];
+int corec57d_wndw_usage_bounds(struct nv50_core *, int, u8, u16);
 int corec57d_new(struct nouveau_drm *, s32, struct nv50_core **);
 
 int coreca7d_new(struct nouveau_drm *, s32, struct nv50_core **);

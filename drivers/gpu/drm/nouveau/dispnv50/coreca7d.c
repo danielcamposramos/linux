@@ -7,6 +7,7 @@
 
 #include <nvif/class.h>
 #include <nvif/pushc97b.h>
+#include <nvif/if0010.h>
 
 #include <nvhw/class/clca7d.h>
 #include <nvhw/class/clca73.h>
@@ -116,6 +117,46 @@ coreca7d_update(struct nv50_core *core, u32 *interlock, bool ntfy)
 }
 
 static int
+coreca7d_wndw_usage_bounds(struct nv50_core *core, int wndw, u8 formats,
+			   u16 fetch)
+{
+	struct nvif_push *push = &core->chan.push;
+	int ret;
+
+	ret = PUSH_WAIT(push, 6);
+	if (ret)
+		return ret;
+
+	/* Tile allocation owns WINDOW_SET_PHYSICAL, so leave it to the
+	 * per-head hook.
+	 */
+	PUSH_MTHD(push, NVCA7D, WINDOW_SET_WINDOW_FORMAT_USAGE_BOUNDS(wndw),
+		  NVVAL(NVCA7D, WINDOW_SET_WINDOW_FORMAT_USAGE_BOUNDS, RGB_PACKED1BPP,
+			!!(formats & NVIF_DISP_IMP_FORMAT_RGB_PACKED_1_BPP)) |
+		  NVVAL(NVCA7D, WINDOW_SET_WINDOW_FORMAT_USAGE_BOUNDS, RGB_PACKED2BPP,
+			!!(formats & NVIF_DISP_IMP_FORMAT_RGB_PACKED_2_BPP)) |
+		  NVVAL(NVCA7D, WINDOW_SET_WINDOW_FORMAT_USAGE_BOUNDS, RGB_PACKED4BPP,
+			!!(formats & NVIF_DISP_IMP_FORMAT_RGB_PACKED_4_BPP)) |
+		  NVVAL(NVCA7D, WINDOW_SET_WINDOW_FORMAT_USAGE_BOUNDS, RGB_PACKED8BPP,
+			!!(formats & NVIF_DISP_IMP_FORMAT_RGB_PACKED_8_BPP)) |
+		  NVVAL(NVCA7D, WINDOW_SET_WINDOW_FORMAT_USAGE_BOUNDS, YUV_PACKED422,
+			!!(formats & NVIF_DISP_IMP_FORMAT_YUV_PACKED_422)));
+
+	PUSH_MTHD(push, NVCA7D, WINDOW_SET_WINDOW_USAGE_BOUNDS(wndw),
+		  NVVAL(NVCA7D, WINDOW_SET_WINDOW_USAGE_BOUNDS,
+			MAX_PIXELS_FETCHED_PER_LINE, fetch) |
+		  NVDEF(NVCA7D, WINDOW_SET_WINDOW_USAGE_BOUNDS, ILUT_ALLOWED, TRUE) |
+		  NVDEF(NVCA7D, WINDOW_SET_WINDOW_USAGE_BOUNDS, TMO_LUT_ALLOWED, TRUE) |
+		  NVDEF(NVCA7D, WINDOW_SET_WINDOW_USAGE_BOUNDS, INPUT_SCALER_TAPS, TAPS_2) |
+		  NVDEF(NVCA7D, WINDOW_SET_WINDOW_USAGE_BOUNDS, UPSCALING_ALLOWED, FALSE));
+
+	PUSH_MTHD(push, NVCA7D, WINDOW_SET_MAX_INPUT_SCALE_FACTOR(wndw),
+		  NVVAL(NVCA7D, WINDOW_SET_MAX_INPUT_SCALE_FACTOR, HORIZONTAL, 0x400) |
+		  NVVAL(NVCA7D, WINDOW_SET_MAX_INPUT_SCALE_FACTOR, VERTICAL, 0x400));
+	return 0;
+}
+
+static int
 coreca7d_init(struct nv50_core *core)
 {
 	struct nvif_push *push = &core->chan.push;
@@ -139,6 +180,7 @@ coreca7d_init(struct nv50_core *core)
 		PUSH_MTHD(push, NVCA7D, WINDOW_SET_WINDOW_USAGE_BOUNDS(i),
 			  NVVAL(NVCA7D, WINDOW_SET_WINDOW_USAGE_BOUNDS, MAX_PIXELS_FETCHED_PER_LINE, 0x7fff) |
 			  NVDEF(NVCA7D, WINDOW_SET_WINDOW_USAGE_BOUNDS, ILUT_ALLOWED, TRUE) |
+			  NVDEF(NVCA7D, WINDOW_SET_WINDOW_USAGE_BOUNDS, TMO_LUT_ALLOWED, TRUE) |
 			  NVDEF(NVCA7D, WINDOW_SET_WINDOW_USAGE_BOUNDS, INPUT_SCALER_TAPS, TAPS_2) |
 			  NVDEF(NVCA7D, WINDOW_SET_WINDOW_USAGE_BOUNDS, UPSCALING_ALLOWED, FALSE));
 	}
@@ -220,6 +262,7 @@ coreca7d = {
 	.ntfy_wait_done = corec37d_ntfy_wait_done,
 	.update = coreca7d_update,
 	.wndw.owner = corec37d_wndw_owner,
+	.wndw.usage_bounds = coreca7d_wndw_usage_bounds,
 	.head = &headca7d,
 	.sor = &sorc37d,
 #if IS_ENABLED(CONFIG_DEBUG_FS)
