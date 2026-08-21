@@ -138,9 +138,8 @@ struct nv50_head_atom {
 		u8 tu:6;
 	} dp;
 
-	/* GB20x tile/phywin ownership. An empty tile mask preserves the identity
-	 * mapping until allocation assigns masks: tile n to head n and phywin n
-	 * to window n.
+	/* GB20x tile/phywin ownership is allocated on modeset and read back
+	 * for inherited heads.
 	 */
 	struct {
 		u8 tiles_mask;

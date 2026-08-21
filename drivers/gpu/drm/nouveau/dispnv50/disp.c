@@ -52,6 +52,7 @@
 #include <nvif/class.h>
 #include <nvif/cl0002.h>
 #include <nvif/event.h>
+#include <nvif/if0010.h>
 #include <nvif/if0012.h>
 #include <nvif/if0014.h>
 #include <nvif/timer.h>
@@ -230,6 +231,13 @@ MODULE_PARM_DESC(kms_vram_pushbuf, "Place EVO/NVD push buffers in VRAM (default:
 static int nv50_dmac_vram_pushbuf = -1;
 module_param_named(kms_vram_pushbuf, nv50_dmac_vram_pushbuf, int, 0400);
 
+MODULE_PARM_DESC(imp_check, "Validate display configurations through GSP's IMP "
+		 "(1 = enforce (default), 0 = skip, like OpenRM's "
+		 "NVKMS_MODE_VALIDATION_NO_EXTENDED_GPU_CAPABILITIES_CHECK. "
+		 "Ignored where the IMP reply configures the hardware, e.g. GB20x+)");
+static int nouveau_imp_check = 1;
+module_param_named(imp_check, nouveau_imp_check, int, 0400);
+
 int
 nv50_dmac_create(struct nouveau_drm *drm,
 		 const s32 *oclass, u8 head, void *data, u32 size, s64 syncbuf,
@@ -316,6 +324,29 @@ nv50_dmac_create(struct nouveau_drm *drm,
 		return ret;
 
 	return ret;
+}
+
+/* Mode checks and client restore commits can run from the poll worker. Since
+ * runtime suspend waits for that worker, resuming here would deadlock. The
+ * device is already runtime active during polling, so take the reference
+ * without resuming.
+ */
+static int
+nv50_disp_pm_get(struct drm_device *dev)
+{
+	int ret;
+
+	if (drm_kms_helper_is_poll_worker()) {
+		pm_runtime_get_noresume(dev->dev);
+		return 0;
+	}
+
+	ret = pm_runtime_get_sync(dev->dev);
+	if (ret < 0 && ret != -EACCES) {
+		pm_runtime_put_autosuspend(dev->dev);
+		return ret;
+	}
+	return 0;
 }
 
 /******************************************************************************
@@ -2586,6 +2617,462 @@ nv50_disp_outp_atomic_check_set(struct nv50_atom *atom,
 	return 0;
 }
 
+/* IMP reports how many tiles each head needs, leaving ownership to the driver.
+ * Preserve compatible assignments and allocate scaling heads first so they can
+ * use scarce TYPE_0 tiles. If a scaling allocation fails, reclaim TYPE_0 tiles
+ * from modeset heads that do not need them, retry the failed head, then refill
+ * the donors.
+ */
+static bool
+nv50_head_needs_type0_tiles(const struct nv50_head_atom *asyh)
+{
+	/* Output scaling needs TYPE_0 tiles. Hardware YUV420 would also require
+	 * them, but nouveau does not support it yet.
+	 */
+	return asyh->view.iW != asyh->view.oW || asyh->view.iH != asyh->view.oH;
+}
+
+/* Drop excess or incompatible tiles and any phywins beyond one per retained
+ * tile on each window.
+ */
+static void
+nv50_head_mtc_unassign_extra(struct nv50_disp *disp,
+			     struct nv50_head_atom *asyh, u8 required)
+{
+	const bool type0 = nv50_head_needs_type0_tiles(asyh);
+	unsigned long mask = asyh->mtc.tiles_mask;
+	u8 tiles = 0, kept = 0, w;
+	int bit;
+
+	for_each_set_bit(bit, &mask, 8) {
+		if (kept >= required)
+			break;
+		if (type0 && !(disp->tile.type0_tiles & BIT(bit)))
+			continue;
+		tiles |= BIT(bit);
+		kept++;
+	}
+
+	asyh->mtc.tiles_mask = tiles;
+
+	for (w = 0; w < 2; w++) {
+		u32 phywins = 0;
+		u8 kept_pw = 0;
+
+		mask = asyh->mtc.phywins_mask[w];
+		for_each_set_bit(bit, &mask, 32) {
+			if (kept_pw >= kept)
+				break;
+			phywins |= BIT(bit);
+			kept_pw++;
+		}
+		asyh->mtc.phywins_mask[w] = phywins;
+	}
+}
+
+/* Use trimmed tiles first to leave TYPE_0 tiles available for scaling, but
+ * allow unscaled heads to use TYPE_0 when the trimmed pool is exhausted.
+ */
+static u8
+nv50_disp_tiles_get(struct nv50_disp *disp, u8 count, bool type0, u8 *free_tiles)
+{
+	u8 tiles = 0;
+	int pass;
+
+	for (pass = 0; pass < 2 && count; pass++) {
+		const bool want_type0 = type0 || pass == 1;
+		u8 candidates = *free_tiles & ~tiles;
+
+		if (want_type0)
+			candidates &= disp->tile.type0_tiles;
+		else
+			candidates &= ~disp->tile.type0_tiles;
+
+		while (count && candidates) {
+			const u8 tile = __ffs(candidates);
+
+			tiles |= BIT(tile);
+			candidates &= ~BIT(tile);
+			count--;
+		}
+
+		if (type0)
+			break;
+	}
+
+	if (count)
+		return 0;
+
+	*free_tiles &= ~tiles;
+	return tiles;
+}
+
+static int
+nv50_head_mtc_assign(struct nv50_disp *disp, struct nv50_head_atom *asyh,
+		     u8 required, u8 *free_tiles, u32 *free_phywins)
+{
+	const bool type0 = nv50_head_needs_type0_tiles(asyh);
+	const u8 have = hweight8(asyh->mtc.tiles_mask);
+	u8 w;
+
+	if (have < required) {
+		const u8 tiles = nv50_disp_tiles_get(disp, required - have,
+						     type0, free_tiles);
+
+		if (!tiles)
+			return -ENOSPC;
+		asyh->mtc.tiles_mask |= tiles;
+	}
+
+	/* Each logical window needs one physical window for every tile
+	 * assigned to its head.
+	 */
+	for (w = 0; w < 2; w++) {
+		while (hweight32(asyh->mtc.phywins_mask[w]) < required) {
+			u32 phywin;
+
+			if (!*free_phywins)
+				return -ENOSPC;
+
+			phywin = __ffs(*free_phywins);
+			asyh->mtc.phywins_mask[w] |= BIT(phywin);
+			*free_phywins &= ~BIT(phywin);
+		}
+	}
+
+	return 0;
+}
+
+/* Modeset heads without scaling can release TYPE_0 tiles and one phywin per
+ * tile on each window. Return those resources to the pools so the failed
+ * scaling allocation can be retried. The next pass refills the donor heads.
+ */
+static bool
+nv50_disp_tiles_reclaim(struct nv50_disp *disp, struct drm_atomic_commit *state,
+			u8 *free_tiles, u32 *free_phywins)
+{
+	struct drm_crtc_state *new_crtc_state;
+	struct drm_crtc *crtc;
+	bool reclaimed = false;
+	int i;
+
+	for_each_new_crtc_in_state(state, crtc, new_crtc_state, i) {
+		struct nv50_head_atom *asyh = nv50_head_atom(new_crtc_state);
+		u8 tiles, w;
+
+		if (!new_crtc_state->active ||
+		    !drm_atomic_crtc_needs_modeset(new_crtc_state) ||
+		    nv50_head_needs_type0_tiles(asyh))
+			continue;
+
+		tiles = asyh->mtc.tiles_mask & disp->tile.type0_tiles;
+		if (!tiles)
+			continue;
+
+		for (w = 0; w < 2; w++) {
+			unsigned long mask = asyh->mtc.phywins_mask[w];
+			u32 phywins = 0;
+			u8 n = 0;
+			int bit;
+
+			for_each_set_bit(bit, &mask, 32) {
+				if (n++ >= hweight8(tiles))
+					break;
+				phywins |= BIT(bit);
+			}
+
+			asyh->mtc.phywins_mask[w] &= ~phywins;
+			*free_phywins |= phywins;
+		}
+
+		asyh->mtc.tiles_mask &= ~tiles;
+		*free_tiles |= tiles;
+		reclaimed = true;
+	}
+
+	return reclaimed;
+}
+
+/* Turn the IMP reply's per-head tile counts into ownership. */
+static int
+nv50_disp_atomic_check_tiles(struct drm_device *dev,
+			     struct drm_atomic_commit *state,
+			     const struct nvif_disp_imp_check_v0 *imp,
+			     const u8 *committed_tiles,
+			     const u32 *committed_phywins)
+{
+	struct nv50_disp *disp = nv50_disp(dev);
+	struct drm_crtc_state *new_crtc_state;
+	struct drm_crtc *crtc;
+	const struct nvif_disp_imp_check_head_v0 *by_head[8] = {};
+	u8 free_tiles = disp->tile.tiles;
+	u32 free_phywins = disp->tile.phywins;
+	int i, pass, ret;
+
+	for (i = 0; i < imp->num_heads; i++) {
+		const struct nvif_disp_imp_check_head_v0 *imph = &imp->head[i];
+
+		if (imph->index >= ARRAY_SIZE(by_head))
+			return -EINVAL;
+		if (imph->required_tiles < 1)
+			return -EINVAL;
+
+		/* The query does not enable DSC or offer a slice mask, so IMP
+		 * cannot return a DSC solution and the slice count is unused.
+		 */
+		by_head[imph->index] = imph;
+	}
+
+	/* Remove retained ownership from the free pools after trimming modeset
+	 * heads. Resources released here can be reassigned in this commit
+	 * because transfers force an early disable update below.
+	 */
+	for_each_new_crtc_in_state(state, crtc, new_crtc_state, i) {
+		const int head_idx = nv50_head(crtc)->base.index;
+		struct nv50_head_atom *asyh = nv50_head_atom(new_crtc_state);
+
+		if (!new_crtc_state->active)
+			continue;
+
+		if (by_head[head_idx] &&
+		    drm_atomic_crtc_needs_modeset(new_crtc_state))
+			nv50_head_mtc_unassign_extra(disp, asyh,
+						     by_head[head_idx]->required_tiles);
+
+		free_tiles &= ~asyh->mtc.tiles_mask;
+		free_phywins &= ~(asyh->mtc.phywins_mask[0] |
+				  asyh->mtc.phywins_mask[1]);
+	}
+
+	/* Allocate scaling heads first so unscaled heads do not consume their
+	 * TYPE_0 tiles. Iterating by head index makes the choice repeatable.
+	 */
+	for (pass = 0; pass < 2; pass++) {
+		drm_for_each_crtc(crtc, dev) {
+			const int head_idx = nv50_head(crtc)->base.index;
+			struct nv50_head_atom *asyh;
+
+			new_crtc_state = drm_atomic_get_new_crtc_state(state, crtc);
+			if (!new_crtc_state || !new_crtc_state->active ||
+			    !by_head[head_idx] ||
+			    !drm_atomic_crtc_needs_modeset(new_crtc_state))
+				continue;
+
+			asyh = nv50_head_atom(new_crtc_state);
+			if (nv50_head_needs_type0_tiles(asyh) != (pass == 0))
+				continue;
+
+			ret = nv50_head_mtc_assign(disp, asyh,
+						   by_head[head_idx]->required_tiles,
+						   &free_tiles, &free_phywins);
+			if (ret == -ENOSPC && pass == 0 &&
+			    nv50_disp_tiles_reclaim(disp, state, &free_tiles,
+						    &free_phywins))
+				ret = nv50_head_mtc_assign(disp, asyh,
+							   by_head[head_idx]->required_tiles,
+							   &free_tiles, &free_phywins);
+			if (ret) {
+				drm_dbg_kms(dev,
+					    "head-%d: no free tiles for a %d-tile assignment\n",
+					    head_idx,
+					    by_head[head_idx]->required_tiles);
+				return ret;
+			}
+		}
+	}
+
+	/* The hardware cannot transfer tile or phywin ownership between heads
+	 * in one update, so flush the old owner's disable before attaching the
+	 * new owner.
+	 */
+	for_each_new_crtc_in_state(state, crtc, new_crtc_state, i) {
+		struct nv50_head_atom *asyh = nv50_head_atom(new_crtc_state);
+		const int head_idx = nv50_head(crtc)->base.index;
+		u32 phywins;
+		int other;
+
+		if (!drm_atomic_crtc_needs_modeset(new_crtc_state))
+			continue;
+
+		phywins = asyh->mtc.phywins_mask[0] | asyh->mtc.phywins_mask[1];
+
+		for (other = 0; other < 8; other++) {
+			if (other == head_idx)
+				continue;
+			if ((committed_tiles[other] & asyh->mtc.tiles_mask) ||
+			    (committed_phywins[other] & phywins))
+				nv50_atom(state)->flush_disable = true;
+		}
+	}
+
+	return 0;
+}
+
+/* A modeset changes resource usage for the whole display, so include every
+ * active head in the IMP query. imp_check can bypass validation only on
+ * hardware without tiles, where the reply is not needed for allocation.
+ */
+static int
+nv50_disp_atomic_check_imp(struct drm_device *dev, struct drm_atomic_commit *state)
+{
+	struct nv50_disp *disp = nv50_disp(dev);
+	struct nvif_disp_imp_check_v0 imp = {};
+	u8 committed_tiles[8] = {};
+	u32 committed_phywins[8] = {};
+	struct drm_crtc_state *old_crtc_state, *new_crtc_state;
+	struct drm_crtc *crtc;
+	bool any_modeset = false;
+	int ret, i;
+
+	for_each_new_crtc_in_state(state, crtc, new_crtc_state, i) {
+		/* Head indices must fit both the local ownership arrays and
+		 * the IMP request.
+		 */
+		if (nv50_head(crtc)->base.index >= ARRAY_SIZE(committed_tiles))
+			return -EINVAL;
+
+		if (drm_atomic_crtc_needs_modeset(new_crtc_state))
+			any_modeset = true;
+	}
+
+	if (!any_modeset)
+		return 0;
+
+	/* Every head is part of the query, inherited ones included. */
+	drm_for_each_crtc(crtc, dev) {
+		new_crtc_state = drm_atomic_get_crtc_state(state, crtc);
+		if (IS_ERR(new_crtc_state))
+			return PTR_ERR(new_crtc_state);
+	}
+
+	/* nvdisplay does not support interlaced scanout, and IMP has no
+	 * second-field timings. Reject interlaced rasters even when IMP
+	 * validation is bypassed.
+	 */
+	for_each_new_crtc_in_state(state, crtc, new_crtc_state, i) {
+		if (new_crtc_state->active &&
+		    nv50_head_atom(new_crtc_state)->mode.interlace)
+			return -EINVAL;
+	}
+
+	if (!nouveau_imp_check && !disp->tile.nr_tiles)
+		return 0;
+
+	/* Firmware without the IMP API. */
+	if (disp->imp_unsupported)
+		return 0;
+
+	/* Save current ownership so the new assignment can be checked for
+	 * transfers that require a separate disable update.
+	 */
+	for_each_oldnew_crtc_in_state(state, crtc, old_crtc_state, new_crtc_state, i) {
+		const struct nv50_head_atom *armh = nv50_head_atom(old_crtc_state);
+		const int head_idx = nv50_head(crtc)->base.index;
+
+		/* The state now includes CRTCs added after the first bounds
+		 * check.
+		 */
+		if (head_idx >= ARRAY_SIZE(committed_tiles))
+			return -EINVAL;
+
+		committed_tiles[head_idx] = armh->mtc.tiles_mask;
+		committed_phywins[head_idx] = armh->mtc.phywins_mask[0] |
+					      armh->mtc.phywins_mask[1];
+	}
+
+	for_each_new_crtc_in_state(state, crtc, new_crtc_state, i) {
+		struct nvif_disp_imp_check_head_v0 *imph;
+		struct nv50_head_atom *asyh;
+		const int head_idx = nv50_head(crtc)->base.index;
+		const bool modeset = drm_atomic_crtc_needs_modeset(new_crtc_state);
+
+		if (!new_crtc_state->active)
+			continue;
+
+		asyh = nv50_head_atom(new_crtc_state);
+
+		/* Include inherited heads using their armed timings. Omitting a
+		 * live head would let IMP accept configurations that exceed the
+		 * available resources.
+		 */
+		if (!asyh->mode.clock) {
+			drm_warn_once(dev, "head-%d active but undescribable\n", head_idx);
+
+			/* Tile allocation needs a complete query, so fail if
+			 * an active head cannot be described. On hardware
+			 * without tiles, skip IMP rather than blocking all
+			 * modesets on that head's missing state.
+			 */
+			if (disp->tile.nr_tiles)
+				return -EINVAL;
+			return 0;
+		}
+
+		imph = &imp.head[imp.num_heads++];
+		imph->index = head_idx;
+		imph->vtaps = asyh->view.vtaps;
+		/* A nonzero tile mask constrains IMP to the current
+		 * assignment, which heads outside the modeset must retain.
+		 * Leave modeset masks zero so IMP can choose their tile
+		 * counts.
+		 */
+		if (disp->tile.nr_tiles && !modeset) {
+			if (!asyh->mtc.tiles_mask)
+				return -EINVAL;
+			imph->tile_mask = asyh->mtc.tiles_mask;
+		}
+		imph->pclk_khz = asyh->mode.clock;
+		imph->htotal = asyh->mode.h.active;
+		imph->vtotal = asyh->mode.v.active;
+		imph->hblanks = asyh->mode.h.blanks;
+		imph->hblanke = asyh->mode.h.blanke;
+		imph->vblanks = asyh->mode.v.blanks;
+		imph->vblanke = asyh->mode.v.blanke;
+		imph->in_w = asyh->view.iW;
+		imph->in_h = asyh->view.iH;
+		imph->out_w = asyh->view.oW;
+		imph->out_h = asyh->view.oH;
+		imph->wndw_formats[0] = NVIF_DISP_IMP_FORMAT_ALL;
+		imph->wndw_formats[1] = NVIF_DISP_IMP_FORMAT_ALL;
+	}
+
+	if (!imp.num_heads)
+		return 0;
+
+	imp.tiled = disp->tile.nr_tiles > 0;
+
+	/* Client restore commits can run outside an ioctl with no runtime PM
+	 * reference, so acquire one for the query.
+	 */
+	ret = nv50_disp_pm_get(dev);
+	if (ret) {
+		drm_warn_once(dev, "IMP check unavailable (%d), rejecting\n", ret);
+		return ret;
+	}
+
+	ret = nvif_disp_imp_check(disp->disp, &imp);
+	pm_runtime_mark_last_busy(dev->dev);
+	pm_runtime_put_autosuspend(dev->dev);
+	if (ret == -ENODEV) {
+		disp->imp_unsupported = true;
+		return 0;
+	}
+	if (ret) {
+		drm_warn_once(dev, "IMP check failed (%d), rejecting\n", ret);
+		return -EINVAL;
+	}
+	if (!imp.possible) {
+		drm_dbg_kms(dev, "IMP rejected the configuration\n");
+		return -EINVAL;
+	}
+
+	if (!disp->tile.nr_tiles)
+		return 0;
+
+	return nv50_disp_atomic_check_tiles(dev, state, &imp, committed_tiles,
+					    committed_phywins);
+}
+
 static int
 nv50_disp_atomic_check(struct drm_device *dev, struct drm_atomic_commit *state)
 {
@@ -2622,6 +3109,10 @@ nv50_disp_atomic_check(struct drm_device *dev, struct drm_atomic_commit *state)
 	}
 
 	ret = drm_atomic_helper_check(dev, state);
+	if (ret)
+		return ret;
+
+	ret = nv50_disp_atomic_check_imp(dev, state);
 	if (ret)
 		return ret;
 

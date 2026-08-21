@@ -364,10 +364,10 @@ headca7d_mtc_set(struct nv50_head *head, struct nv50_head_atom *asyh)
 	u32 start = 0, idx = 0, tiles, tile;
 	int ret;
 
-	/* Keep the hardware's identity mapping while no allocator supplies masks:
-	 * tile n to head n and phywin n to window n.
+	/* An empty mask indicates that atomic check did not provide a required
+	 * assignment. Warn and fall back to the hardware identity mapping.
 	 */
-	if (!asyh->mtc.tiles_mask) {
+	if (WARN_ON_ONCE(!asyh->mtc.tiles_mask)) {
 		asyh->mtc.tiles_mask = BIT(i);
 		asyh->mtc.phywins_mask[0] = BIT(i * 2);
 		asyh->mtc.phywins_mask[1] = BIT(i * 2 + 1);

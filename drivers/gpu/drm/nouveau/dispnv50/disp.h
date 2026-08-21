@@ -14,6 +14,9 @@ struct nv50_disp {
 	struct nv50_core *core;
 	struct nvif_object caps;
 
+	/* Firmware without the IMP API. */
+	bool imp_unsupported;
+
 	/* GB20x tile/phywin capabilities, zero on earlier hardware. type0_tiles
 	 * identifies tiles with both an output scaler and vertical filter.
 	 */
