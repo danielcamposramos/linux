@@ -33,11 +33,13 @@
 #include <linux/hdmi.h>
 #include <linux/component.h>
 #include <linux/iopoll.h>
+#include <linux/math64.h>
 
 #include <drm/display/drm_dp_helper.h>
 #include <drm/display/drm_scdc_helper.h>
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
+#include <drm/drm_atomic_uapi.h>
 #include <drm/drm_edid.h>
 #include <drm/drm_eld.h>
 #include <drm/drm_fb_helper.h>
@@ -2698,6 +2700,114 @@ nv50_display_fini(struct drm_device *dev, bool runtime, bool suspend)
 		cancel_work_sync(&drm->hpd_work);
 }
 
+/* The head atom does not yet describe firmware scanout, so recover its
+ * raster and viewport to include it in IMP validation.
+ *
+ * Derived fields such as blankus, the second interlace blanking region, and
+ * scaler usage bounds remain zero. The mode/view checks recompute these
+ * before setting the flags that cause them to be programmed.
+ */
+static int
+nv50_head_armed_read(struct drm_device *dev, struct nouveau_crtc *nv_crtc,
+		     struct nv50_head_atom *armh)
+{
+	struct nvif_head_armed_v0 args;
+	int ret;
+
+	/* -ENODEV indicates missing raster timings or pixel clock. */
+	ret = nvif_head_armed(&nv_crtc->head, &args);
+	if (ret) {
+		if (ret != -ENODEV)
+			drm_warn(dev, "head-%d is active but its raster could not be read (%d), IMP cannot describe it until it is modeset\n",
+				 nv_crtc->index, ret);
+		return ret;
+	}
+
+	armh->or.nhsync = args.nhsync;
+	armh->or.nvsync = args.nvsync;
+	armh->mode.clock = div_u64(args.hz, 1000);
+	armh->mode.interlace = args.interlace;
+	armh->mode.h.active = args.htotal;
+	armh->mode.h.synce = args.hsynce;
+	armh->mode.h.blanke = args.hblanke;
+	armh->mode.h.blanks = args.hblanks;
+	armh->mode.v.active = args.vtotal;
+	armh->mode.v.synce = args.vsynce;
+	armh->mode.v.blanke = args.vblanke;
+	armh->mode.v.blanks = args.vblanks;
+
+	if (args.view) {
+		armh->view.iW = args.iW;
+		armh->view.iH = args.iH;
+		armh->view.oW = args.oW;
+		armh->view.oH = args.oH;
+		armh->view.vtaps = args.vtaps;
+		armh->view.htaps = args.htaps;
+	}
+
+	drm_dbg_kms(dev, "head-%d inherited: raster %ux%u, %u kHz, viewport %ux%u -> %ux%u\n",
+		    nv_crtc->index, args.htotal, args.vtotal, armh->mode.clock,
+		    args.iW, args.iH, args.oW, args.oH);
+	return 0;
+}
+
+/* An enabled CRTC needs a mode blob for updates without a modeset. Rebuild
+ * it from the armed raster, but leave it unset when viewport readback
+ * reports scaling because the input mode cannot be recovered from output
+ * timings. Older classes lack viewport readback, so this scaling check is
+ * only possible on Volta and later.
+ */
+static bool
+nv50_head_armed_mode(const struct nv50_head_atom *armh,
+		     struct drm_display_mode *mode)
+{
+	const struct nv50_head_mode *m = &armh->mode;
+	u32 vtotal = m->v.active;
+
+	if (!m->clock || m->h.active <= m->h.blanke + 1 ||
+	    m->h.blanks <= m->h.blanke)
+		return false;
+
+	if (armh->view.iW && (armh->view.iW != armh->view.oW ||
+			      armh->view.iH != armh->view.oH))
+		return false;
+
+	if (m->interlace)
+		vtotal = (m->v.active - 1) / 2;
+
+	if (vtotal <= m->v.blanke + 1 || m->v.blanks <= m->v.blanke)
+		return false;
+
+	memset(mode, 0, sizeof(*mode));
+	mode->clock = m->clock;
+	mode->htotal = m->h.active;
+	mode->hsync_start = m->h.active - m->h.blanke - 1;
+	mode->hsync_end = mode->hsync_start + m->h.synce + 1;
+	mode->hdisplay = m->h.blanks - m->h.blanke;
+	mode->vtotal = vtotal;
+	mode->vsync_start = vtotal - m->v.blanke - 1;
+	mode->vsync_end = mode->vsync_start + m->v.synce + 1;
+	mode->vdisplay = m->v.blanks - m->v.blanke;
+
+	if (m->interlace) {
+		mode->vtotal *= 2;
+		mode->vsync_start *= 2;
+		mode->vsync_end *= 2;
+		mode->vdisplay *= 2;
+		mode->flags |= DRM_MODE_FLAG_INTERLACE;
+	}
+
+	if (mode->hsync_end > mode->htotal || mode->vsync_end > mode->vtotal)
+		return false;
+
+	mode->flags |= armh->or.nhsync ? DRM_MODE_FLAG_NHSYNC : DRM_MODE_FLAG_PHSYNC;
+	mode->flags |= armh->or.nvsync ? DRM_MODE_FLAG_NVSYNC : DRM_MODE_FLAG_PVSYNC;
+	mode->type = DRM_MODE_TYPE_DRIVER;
+	drm_mode_set_name(mode);
+	drm_mode_set_crtcinfo(mode, CRTC_INTERLACE_HALVE_V | CRTC_STEREO_DOUBLE);
+	return true;
+}
+
 static inline void
 nv50_display_read_hw_or_state(struct drm_device *dev, struct nv50_disp *disp,
 			      struct nouveau_encoder *outp)
@@ -2706,6 +2816,7 @@ nv50_display_read_hw_or_state(struct drm_device *dev, struct nv50_disp *disp,
 	struct drm_connector_list_iter conn_iter;
 	struct drm_connector *conn;
 	struct nv50_head_atom *armh;
+	struct drm_display_mode mode;
 	const u32 encoder_mask = drm_encoder_mask(&outp->base.base);
 	bool found_conn = false, found_head = false;
 	u8 proto;
@@ -2760,8 +2871,23 @@ nv50_display_read_hw_or_state(struct drm_device *dev, struct nv50_disp *disp,
 	if (drm_WARN_ON(dev, !found_conn))
 		return;
 
-	armh->state.encoder_mask = encoder_mask;
-	armh->state.connector_mask = drm_connector_mask(conn);
+	/* An OR can still name a head with no raster or pixel clock. Unless its
+	 * armed timings can be read, leave the head inactive and release the OR
+	 * acquired during inheritance so the first modeset can acquire it again.
+	 */
+	if (nv50_head_armed_read(dev, nouveau_crtc(crtc), armh)) {
+		drm_dbg_kms(dev, "%s: head-%d not inherited\n",
+			    outp->base.base.name, crtc->index);
+		nvif_outp_release(&outp->outp);
+		return;
+	}
+
+	if (nv50_head_armed_mode(armh, &mode) &&
+	    !drm_atomic_set_mode_for_crtc(&armh->state, &mode))
+		drm_mode_copy(&armh->state.adjusted_mode, &mode);
+
+	armh->state.encoder_mask |= encoder_mask;
+	armh->state.connector_mask |= drm_connector_mask(conn);
 	armh->state.active = true;
 	armh->state.enable = true;
 	pm_runtime_get_noresume(dev->dev);

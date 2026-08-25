@@ -1120,12 +1120,11 @@ r535_dp_aux_pwr(struct nvkm_outp *outp, bool pu)
 static void
 r535_dp_release(struct nvkm_outp *outp)
 {
-	if (!outp->dp.lt.bw) {
-		if (!WARN_ON(!outp->dp.rates))
-			outp->dp.lt.bw = outp->dp.rate[0].rate / 27000;
-		else
-			outp->dp.lt.bw = 0x06;
-	}
+	/* Disabling the lanes still needs a rate argument. An inherited output
+	 * may be released before sink detection, so use RBR if no rate is known.
+	 */
+	if (!outp->dp.lt.bw)
+		outp->dp.lt.bw = outp->dp.rates ? outp->dp.rate[0].rate / 27000 : 0x06;
 
 	outp->dp.lt.nr = 0;
 
