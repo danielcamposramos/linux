@@ -585,6 +585,7 @@ nv50_head_atomic_duplicate_state(struct drm_crtc *crtc)
 	asyh->or = armh->or;
 	asyh->dp = armh->dp;
 	asyh->mtc = armh->mtc;
+	asyh->imp = armh->imp;
 	asyh->clr.mask = 0;
 	asyh->set.mask = 0;
 	return &asyh->state;

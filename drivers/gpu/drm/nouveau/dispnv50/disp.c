@@ -3013,21 +3013,110 @@ nv50_disp_atomic_check_tiles(struct drm_device *dev,
 	return 0;
 }
 
-/* A modeset changes resource usage for the whole display, so include every
- * active head in the IMP query. imp_check can bypass validation only on
- * hardware without tiles, where the reply is not needed for allocation.
+/* Format class of a framebuffer for the IMP window usage bound. */
+static u8
+nv50_imp_format_class(const struct drm_framebuffer *fb)
+{
+	switch (fb->format->format) {
+	case DRM_FORMAT_YUYV:
+	case DRM_FORMAT_UYVY:
+		return NVIF_DISP_IMP_FORMAT_YUV_PACKED_422;
+	default:
+		break;
+	}
+
+	switch (fb->format->cpp[0]) {
+	case 1: return NVIF_DISP_IMP_FORMAT_RGB_PACKED_1_BPP;
+	case 2: return NVIF_DISP_IMP_FORMAT_RGB_PACKED_2_BPP;
+	case 4: return NVIF_DISP_IMP_FORMAT_RGB_PACKED_4_BPP;
+	default:
+		break;
+	}
+	return NVIF_DISP_IMP_FORMAT_RGB_PACKED_8_BPP;
+}
+
+/* RGB bounds include all formats with equal or lower usage so negotiation
+ * cannot drop below a plane's requirement. Packed YUV 4:2:2 uses a separate
+ * bound.
+ */
+static u8
+nv50_imp_ceiling(u8 class)
+{
+	if (class & NVIF_DISP_IMP_FORMAT_YUV_PACKED_422)
+		return class;
+	return (class << 1) - 1;
+}
+
+/* Without negotiated bounds, retain the pre-IMP behavior of allowing all
+ * formats.
+ */
+static u8
+nv50_imp_committed(const struct nv50_head_atom *asyh, int w)
+{
+	return asyh->imp.valid ? asyh->imp.wndw_formats[w] :
+				 NVIF_DISP_IMP_FORMAT_ALL;
+}
+
+/* Follow OpenRM's downgrade order, removing packed YUV and 64-bpp RGB before
+ * reducing taps and the second window's RGB bound. Keep primary RGB formats up
+ * to 32 bpp so userspace can fall back to compositing. The notifier exposes
+ * only two- and five-tap filtering, so skip the intermediate tap counts.
+ */
+#define NV50_IMP_RUNG_VTAPS 0xfe
+#define NV50_IMP_RUNG_HTAPS 0xff
+
+static const struct nv50_imp_downgrade {
+	u8 wndw;
+	u8 clr;
+} nv50_imp_ladder[] = {
+	{ 1, NVIF_DISP_IMP_FORMAT_YUV_PACKED_422 },
+	{ 0, NVIF_DISP_IMP_FORMAT_YUV_PACKED_422 },
+	{ 1, NVIF_DISP_IMP_FORMAT_RGB_PACKED_8_BPP },
+	{ 0, NVIF_DISP_IMP_FORMAT_RGB_PACKED_8_BPP },
+	{ NV50_IMP_RUNG_VTAPS, 0 },
+	{ NV50_IMP_RUNG_HTAPS, 0 },
+	{ 1, NVIF_DISP_IMP_FORMAT_RGB_PACKED_4_BPP },
+	{ 1, NVIF_DISP_IMP_FORMAT_RGB_PACKED_2_BPP },
+	{ 1, NVIF_DISP_IMP_FORMAT_RGB_PACKED_1_BPP },
+};
+
+/* Clear saved bounds for modeset heads when the configuration is empty or
+ * lacks timings.
+ */
+static void
+nv50_disp_imp_drop_bounds(struct drm_atomic_commit *state)
+{
+	struct drm_crtc_state *new_crtc_state;
+	struct drm_crtc *crtc;
+	int i;
+
+	for_each_new_crtc_in_state(state, crtc, new_crtc_state, i) {
+		if (drm_atomic_crtc_needs_modeset(new_crtc_state))
+			nv50_head_atom(new_crtc_state)->imp.valid = false;
+	}
+}
+
+/* Flips must fit the last negotiated bounds. For modesets, retry IMP with
+ * reduced usage until the configuration fits or no further downgrade is
+ * possible. Tiled hardware also needs the reply for resource allocation.
  */
 static int
 nv50_disp_atomic_check_imp(struct drm_device *dev, struct drm_atomic_commit *state)
 {
 	struct nv50_disp *disp = nv50_disp(dev);
+	const bool static_wndw_map = disp->core->func->head->static_wndw_map != NULL;
 	struct nvif_disp_imp_check_v0 imp = {};
+	struct nv50_head_atom *asyh_of[8] = {};
 	u8 committed_tiles[8] = {};
 	u32 committed_phywins[8] = {};
+	u8 demand[8][2] = {}, bounds[8][2] = {};
+	u8 modeset_heads = 0;
+	struct drm_plane *plane;
+	struct drm_plane_state *new_plane_state;
 	struct drm_crtc_state *old_crtc_state, *new_crtc_state;
 	struct drm_crtc *crtc;
 	bool any_modeset = false;
-	int ret, i;
+	int ret, i, w;
 
 	for_each_new_crtc_in_state(state, crtc, new_crtc_state, i) {
 		/* Head indices must fit both the local ownership arrays and
@@ -3038,6 +3127,58 @@ nv50_disp_atomic_check_imp(struct drm_device *dev, struct drm_atomic_commit *sta
 
 		if (drm_atomic_crtc_needs_modeset(new_crtc_state))
 			any_modeset = true;
+	}
+
+	/* Collect plane requirements before the IMP bypasses so flips remain
+	 * constrained by committed bounds even when no query runs. Untouched
+	 * planes already fit those bounds.
+	 */
+	for_each_new_plane_in_state(state, plane, new_plane_state, i) {
+		struct nv50_wndw *wndw;
+		u8 cls;
+
+		if (plane->type == DRM_PLANE_TYPE_CURSOR)
+			continue;
+
+		wndw = nv50_wndw(plane);
+		/* Only the fixed window mapping makes id / 2 a head index.
+		 * Older base/overlay IDs would merge distinct windows into one
+		 * demand slot.
+		 */
+		if (!static_wndw_map || wndw->id / 2 >= ARRAY_SIZE(demand))
+			continue;
+
+		/* An enabled off-screen window still consumes resources, even
+		 * when DRM clears plane_state->visible. Use the window atom's
+		 * visibility instead.
+		 */
+		if (!nv50_wndw_atom(new_plane_state)->visible ||
+		    !new_plane_state->fb)
+			continue;
+
+		cls = nv50_imp_format_class(new_plane_state->fb);
+		demand[wndw->id / 2][wndw->id & 1] |= cls;
+	}
+
+	/* A flip cannot exceed the last negotiated bounds without a modeset.
+	 * Heads with no valid bounds keep the permissive default, including
+	 * when IMP is disabled or unsupported.
+	 */
+	for_each_new_crtc_in_state(state, crtc, new_crtc_state, i) {
+		struct nv50_head_atom *asyh = nv50_head_atom(new_crtc_state);
+		const int head_idx = nv50_head(crtc)->base.index;
+
+		if (drm_atomic_crtc_needs_modeset(new_crtc_state))
+			continue;
+
+		for (w = 0; w < 2; w++) {
+			if (demand[head_idx][w] & ~nv50_imp_committed(asyh, w)) {
+				drm_dbg_kms(dev,
+					    "head-%d wndw-%d: format beyond the committed IMP bound\n",
+					    head_idx, w);
+				return -EINVAL;
+			}
+		}
 	}
 
 	if (!any_modeset)
@@ -3091,10 +3232,18 @@ nv50_disp_atomic_check_imp(struct drm_device *dev, struct drm_atomic_commit *sta
 		const int head_idx = nv50_head(crtc)->base.index;
 		const bool modeset = drm_atomic_crtc_needs_modeset(new_crtc_state);
 
-		if (!new_crtc_state->active)
+		if (!new_crtc_state->active) {
+			/* The inactive head no longer uses this
+			 * configuration's bounds.
+			 */
+			nv50_head_atom(new_crtc_state)->imp.valid = false;
 			continue;
+		}
 
 		asyh = nv50_head_atom(new_crtc_state);
+		asyh_of[head_idx] = asyh;
+		if (modeset)
+			modeset_heads |= BIT(head_idx);
 
 		/* Include inherited heads using their armed timings. Omitting a
 		 * live head would let IMP accept configurations that exceed the
@@ -3110,7 +3259,19 @@ nv50_disp_atomic_check_imp(struct drm_device *dev, struct drm_atomic_commit *sta
 			 */
 			if (disp->tile.nr_tiles)
 				return -EINVAL;
+			nv50_disp_imp_drop_bounds(state);
 			return 0;
+		}
+
+		/* Start modeset heads at full bounds to recover capabilities
+		 * that the new mode may allow, while keeping other heads
+		 * within their committed bounds.
+		 */
+		for (w = 0; w < 2; w++) {
+			if (modeset)
+				bounds[head_idx][w] = NVIF_DISP_IMP_FORMAT_ALL;
+			else
+				bounds[head_idx][w] = nv50_imp_committed(asyh, w);
 		}
 
 		imph = &imp.head[imp.num_heads++];
@@ -3137,12 +3298,12 @@ nv50_disp_atomic_check_imp(struct drm_device *dev, struct drm_atomic_commit *sta
 		imph->in_h = asyh->view.iH;
 		imph->out_w = asyh->view.oW;
 		imph->out_h = asyh->view.oH;
-		imph->wndw_formats[0] = NVIF_DISP_IMP_FORMAT_ALL;
-		imph->wndw_formats[1] = NVIF_DISP_IMP_FORMAT_ALL;
 	}
 
-	if (!imp.num_heads)
+	if (!imp.num_heads) {
+		nv50_disp_imp_drop_bounds(state);
 		return 0;
+	}
 
 	imp.tiled = disp->tile.nr_tiles > 0;
 
@@ -3155,9 +3316,70 @@ nv50_disp_atomic_check_imp(struct drm_device *dev, struct drm_atomic_commit *sta
 		return ret;
 	}
 
-	ret = nvif_disp_imp_check(disp->disp, &imp);
+	for (;;) {
+		bool changed = false;
+		unsigned int rung;
+
+		for (i = 0; i < imp.num_heads; i++) {
+			struct nvif_disp_imp_check_head_v0 *imph = &imp.head[i];
+
+			imph->vtaps = asyh_of[imph->index]->view.vtaps;
+			for (w = 0; w < 2; w++)
+				imph->wndw_formats[w] = bounds[imph->index][w];
+		}
+
+		ret = nvif_disp_imp_check(disp->disp, &imp);
+		if (ret || imp.possible)
+			break;
+
+		/* Apply only the first eligible (rung, head) downgrade before
+		 * retrying IMP, restarting from the top each time to preserve
+		 * OpenRM's order. Never remove formats needed by this commit's
+		 * planes.
+		 */
+		for (rung = 0; rung < ARRAY_SIZE(nv50_imp_ladder) && !changed; rung++) {
+			const struct nv50_imp_downgrade *dg = &nv50_imp_ladder[rung];
+			unsigned long mheads = modeset_heads;
+			int h;
+
+			for_each_set_bit(h, &mheads, 8) {
+				struct nv50_head_atom *asyh = asyh_of[h];
+				const struct nv50_scaler_caps *scaler =
+					&disp->scaler[h];
+
+				if (dg->wndw == NV50_IMP_RUNG_VTAPS) {
+					if (asyh->view.vtaps != 5 ||
+					    min(asyh->view.iW, asyh->view.oW) >
+						scaler->taps2.max_pixels ||
+					    asyh->view.max_v > scaler->taps2.max_v)
+						continue;
+					asyh->view.vtaps = 2;
+					asyh->set.view = true;
+				} else if (dg->wndw == NV50_IMP_RUNG_HTAPS) {
+					if (asyh->view.htaps != 5 ||
+					    asyh->view.max_h > scaler->taps2.max_h)
+						continue;
+					asyh->view.htaps = 2;
+					asyh->set.view = true;
+				} else {
+					if (!(bounds[h][dg->wndw] & dg->clr) ||
+					    (demand[h][dg->wndw] &&
+					     (nv50_imp_ceiling(demand[h][dg->wndw]) & dg->clr)))
+						continue;
+					bounds[h][dg->wndw] &= ~dg->clr;
+				}
+				nv50_atom(state)->lock_core = true;
+				changed = true;
+				break;
+			}
+		}
+
+		if (!changed)
+			break;
+	}
 	pm_runtime_mark_last_busy(dev->dev);
 	pm_runtime_put_autosuspend(dev->dev);
+
 	if (ret == -ENODEV) {
 		disp->imp_unsupported = true;
 		return 0;
@@ -3169,6 +3391,21 @@ nv50_disp_atomic_check_imp(struct drm_device *dev, struct drm_atomic_commit *sta
 	if (!imp.possible) {
 		drm_dbg_kms(dev, "IMP rejected the configuration\n");
 		return -EINVAL;
+	}
+
+	/* Keep the accepted bounds in head state so later flips can be checked
+	 * without another IMP query.
+	 */
+	for (i = 0; i < imp.num_heads; i++) {
+		const int h = imp.head[i].index;
+		struct nv50_head_atom *asyh = asyh_of[h];
+
+		if (!asyh || !(modeset_heads & BIT(h)))
+			continue;
+
+		asyh->imp.wndw_formats[0] = bounds[h][0];
+		asyh->imp.wndw_formats[1] = bounds[h][1];
+		asyh->imp.valid = true;
 	}
 
 	if (!disp->tile.nr_tiles)
