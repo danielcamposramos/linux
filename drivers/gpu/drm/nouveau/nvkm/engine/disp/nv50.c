@@ -29,6 +29,8 @@
 #include "ior.h"
 #include "outp.h"
 
+#include <linux/math64.h>
+
 #include <core/client.h>
 #include <core/ramht.h>
 #include <subdev/bios.h>
@@ -421,7 +423,11 @@ nv50_head_state(struct nvkm_head *head, struct nvkm_head_state *state)
 	data = nvkm_rd32(device, 0x610b00 + hoff);
 	state->vsynce = (data & 0xffff0000) >> 16;
 	state->hsynce = (data & 0x0000ffff);
-	state->hz = (nvkm_rd32(device, 0x610ad0 + hoff) & 0x003fffff) * 1000;
+	/* Bits 21:0 hold the clock in kHz and bit 24 is ADJ1000DIV1001. */
+	data = nvkm_rd32(device, 0x610ad0 + hoff);
+	state->hz = (data & 0x003fffff) * 1000;
+	if (data & 0x01000000)
+		state->hz = div_u64(state->hz * 1000, 1001);
 }
 
 static const struct nvkm_head_func
@@ -1146,7 +1152,7 @@ nv50_disp_super_3_0(struct nvkm_disp *disp, struct nvkm_head *head)
 		return;
 
 	/* Execute OnInt3 IED script. */
-	nv50_disp_super_ied_on(head, ior, 1, head->asy.hz / 1000);
+	nv50_disp_super_ied_on(head, ior, 1, div_u64(head->asy.hz, 1000));
 
 	/* OR-specific handling. */
 	if (ior->func->war_3)
@@ -1157,7 +1163,7 @@ static void
 nv50_disp_super_2_2_dp(struct nvkm_head *head, struct nvkm_ior *ior)
 {
 	struct nvkm_subdev *subdev = &head->disp->engine.subdev;
-	const u32      khz = head->asy.hz / 1000;
+	const u32      khz = div_u64(head->asy.hz, 1000);
 	const u32 linkKBps = ior->dp.bw * 27000;
 	const u32   symbol = 100000;
 	int bestTU = 0, bestVTUi = 0, bestVTUf = 0, bestVTUa = 0;
@@ -1262,7 +1268,7 @@ nv50_disp_super_2_2_dp(struct nvkm_head *head, struct nvkm_ior *ior)
 void
 nv50_disp_super_2_2(struct nvkm_disp *disp, struct nvkm_head *head)
 {
-	const u32 khz = head->asy.hz / 1000;
+	const u32 khz = div_u64(head->asy.hz, 1000);
 	struct nvkm_outp *outp;
 	struct nvkm_ior *ior;
 
@@ -1308,7 +1314,7 @@ void
 nv50_disp_super_2_1(struct nvkm_disp *disp, struct nvkm_head *head)
 {
 	struct nvkm_devinit *devinit = disp->engine.subdev.device->devinit;
-	const u32 khz = head->asy.hz / 1000;
+	const u32 khz = div_u64(head->asy.hz, 1000);
 	HEAD_DBG(head, "supervisor 2.1 - %d khz", khz);
 	if (khz)
 		nvkm_devinit_pll_set(devinit, PLL_VPLL0 + head->id, khz);

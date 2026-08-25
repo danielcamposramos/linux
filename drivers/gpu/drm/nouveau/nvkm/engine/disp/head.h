@@ -20,7 +20,7 @@ struct nvkm_head {
 		u16 vsynce;
 		u16 vblanke;
 		u16 vblanks;
-		u32 hz;
+		u64 hz;
 
 		/* Prior to GF119, these are set by the OR. */
 		struct {

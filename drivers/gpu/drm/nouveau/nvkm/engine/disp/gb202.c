@@ -6,6 +6,8 @@
 #include "head.h"
 #include "ior.h"
 
+#include <linux/math64.h>
+
 #include <subdev/timer.h>
 
 /* GB20x (NVD5.0) reorganised the SF HDMI packet units. The AVI unit is
@@ -106,11 +108,16 @@ gb202_head_state(struct nvkm_head *head, struct nvkm_head_state *state)
 	data = nvkm_rd32(device, 0x682070 + hoff);
 	state->vblanks = (data & 0xffff0000) >> 16;
 	state->hblanks = (data & 0x0000ffff);
-	/* Bit 31 is ADJ1000DIV1001, not a HERTZ bit. We don't have enough bits
-	 * to add the full clock in hz on Blackwell (35 bits), but state->hz
-	 * is unused and obsolete under GSP so this is fine.
+	/* The low method holds clock bits 30:0 and ADJ1000DIV1001 at bit 31.
+	 * Read the four bits in SET_PIXEL_CLOCK_FREQUENCY_HI as well to recover
+	 * the full 35 bit value from headca7d_mode().
 	 */
-	state->hz = nvkm_rd32(device, 0x68200c + hoff) & 0x7fffffff;
+	data = nvkm_rd32(device, 0x68200c + hoff);
+	state->hz = data & 0x7fffffff;
+	state->hz |= (u64)(nvkm_rd32(device, 0x6820c0 + hoff) & 0x0000000f) << 31;
+	/* ADJ1000DIV1001 scales the programmed rate by 1000/1001. */
+	if (data & 0x80000000)
+		state->hz = div_u64(state->hz * 1000, 1001);
 
 	data = nvkm_rd32(device, 0x682004 + hoff);
 	switch ((data & 0x000000f0) >> 4) {

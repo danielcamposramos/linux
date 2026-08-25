@@ -26,6 +26,8 @@
 #include "ior.h"
 #include "outp.h"
 
+#include <linux/math64.h>
+
 #include <core/client.h>
 #include <core/gpuobj.h>
 #include <core/ramht.h>
@@ -282,7 +284,12 @@ gv100_head_state(struct nvkm_head *head, struct nvkm_head_state *state)
 	data = nvkm_rd32(device, 0x682070 + hoff);
 	state->vblanks = (data & 0xffff0000) >> 16;
 	state->hblanks = (data & 0x0000ffff);
-	state->hz = nvkm_rd32(device, 0x68200c + hoff);
+	/* Bits 30:0 hold HERTZ and bit 31 is ADJ1000DIV1001. */
+	data = nvkm_rd32(device, 0x68200c + hoff);
+	state->hz = data & 0x7fffffff;
+	/* ADJ1000DIV1001 scales the programmed rate by 1000/1001. */
+	if (data & 0x80000000)
+		state->hz = div_u64(state->hz * 1000, 1001);
 
 	data = nvkm_rd32(device, 0x682004 + hoff);
 	switch ((data & 0x000000f0) >> 4) {
