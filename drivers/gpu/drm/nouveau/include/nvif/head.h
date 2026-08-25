@@ -3,6 +3,7 @@
 #define __NVIF_HEAD_H__
 #include <nvif/object.h>
 #include <nvif/event.h>
+#include <nvif/if0013.h>
 struct nvif_disp;
 
 struct nvif_head {
@@ -17,6 +18,8 @@ nvif_head_id(struct nvif_head *head)
 {
 	return head->object.handle;
 }
+
+int nvif_head_armed(struct nvif_head *, struct nvif_head_armed_v0 *);
 
 int nvif_head_vblank_event_ctor(struct nvif_head *, const char *name, nvif_event_func, bool wait,
 				struct nvif_event *);

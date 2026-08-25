@@ -27,6 +27,18 @@
 #include <nvif/if0013.h>
 
 int
+nvif_head_armed(struct nvif_head *head, struct nvif_head_armed_v0 *args)
+{
+	int ret;
+
+	args->version = 0;
+
+	ret = nvif_mthd(&head->object, NVIF_HEAD_V0_ARMED, args, sizeof(*args));
+	NVIF_ERRON(ret && ret != -ENODEV, &head->object, "[ARMED] ret:%d", ret);
+	return ret;
+}
+
+int
 nvif_head_vblank_event_ctor(struct nvif_head *head, const char *name, nvif_event_func func,
 			    bool wait, struct nvif_event *event)
 {

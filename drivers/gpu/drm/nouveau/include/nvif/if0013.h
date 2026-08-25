@@ -32,4 +32,38 @@ union nvif_head_scanoutpos_args {
 		__u16 hline;
 	} v0;
 };
+
+#define NVIF_HEAD_V0_ARMED 0x01
+
+union nvif_head_armed_args {
+	struct nvif_head_armed_v0 {
+		__u8  version;
+		__u8  vtaps;
+		__u8  htaps;
+		__u8  interlace;
+		/* Set when the class supplies viewport and tap readback
+		 * (GV100+). Ignore those fields when clear. This flag does not
+		 * report whether the head has a scaler.
+		 */
+		__u8  view;
+		__u8  nhsync;
+		__u8  nvsync;
+		/* GB20x tile ownership, zero where the class has none. */
+		__u8  tiles_mask;
+		__u64 hz;
+		__u16 htotal;
+		__u16 hsynce;
+		__u16 hblanke;
+		__u16 hblanks;
+		__u16 vtotal;
+		__u16 vsynce;
+		__u16 vblanke;
+		__u16 vblanks;
+		__u16 iW;
+		__u16 iH;
+		__u16 oW;
+		__u16 oH;
+		__u32 phywins[2];
+	} v0;
+};
 #endif

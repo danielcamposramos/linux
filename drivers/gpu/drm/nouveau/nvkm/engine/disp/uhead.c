@@ -72,12 +72,58 @@ nvkm_uhead_mthd_scanoutpos(struct nvkm_head *head, void *argv, u32 argc)
 }
 
 static int
+nvkm_uhead_mthd_armed(struct nvkm_head *head, void *argv, u32 argc)
+{
+	union nvif_head_armed_args *args = argv;
+
+	if (argc != sizeof(args->v0) || args->v0.version != 0)
+		return -ENOSYS;
+
+	head->func->state(head, &head->arm);
+
+	/* VBIOS can leave nonzero raster totals on unused heads, so require a
+	 * pixel clock as well before exposing scanout state. On failure the
+	 * caller must ignore the remaining fields.
+	 */
+	if (!head->arm.htotal || !head->arm.vtotal || !head->arm.hz)
+		return -ENODEV;
+
+	args->v0.nhsync  = head->arm.or.nhsync;
+	args->v0.nvsync  = head->arm.or.nvsync;
+	args->v0.tiles_mask = head->arm.mtc.tiles;
+	args->v0.phywins[0] = head->arm.mtc.phywins[0];
+	args->v0.phywins[1] = head->arm.mtc.phywins[1];
+	args->v0.hz      = head->arm.hz;
+	args->v0.htotal  = head->arm.htotal;
+	args->v0.hsynce  = head->arm.hsynce;
+	args->v0.hblanke = head->arm.hblanke;
+	args->v0.hblanks = head->arm.hblanks;
+	args->v0.vtotal  = head->arm.vtotal;
+	args->v0.vsynce  = head->arm.vsynce;
+	args->v0.vblanke = head->arm.vblanke;
+	args->v0.vblanks = head->arm.vblanks;
+	/* Only classes with viewport readback set vtaps, making it a validity
+	 * marker even when the head is not scaling.
+	 */
+	args->v0.view    = head->arm.view.vtaps != 0;
+	args->v0.iW      = head->arm.view.iW;
+	args->v0.iH      = head->arm.view.iH;
+	args->v0.oW      = head->arm.view.oW;
+	args->v0.oH      = head->arm.view.oH;
+	args->v0.vtaps   = head->arm.view.vtaps;
+	args->v0.htaps   = head->arm.view.htaps;
+	args->v0.interlace = head->arm.interlace;
+	return 0;
+}
+
+static int
 nvkm_uhead_mthd(struct nvkm_object *object, u32 mthd, void *argv, u32 argc)
 {
 	struct nvkm_head *head = nvkm_uhead(object);
 
 	switch (mthd) {
 	case NVIF_HEAD_V0_SCANOUTPOS: return nvkm_uhead_mthd_scanoutpos(head, argv, argc);
+	case NVIF_HEAD_V0_ARMED: return nvkm_uhead_mthd_armed(head, argv, argc);
 	default:
 		return -EINVAL;
 	}
