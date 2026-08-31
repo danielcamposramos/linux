@@ -1637,6 +1637,41 @@ nv50_link_config_show(struct seq_file *m, void *data)
 }
 DEFINE_SHOW_ATTRIBUTE(nv50_link_config);
 
+/* Update the property state without an atomic commit, so the cap takes
+ * effect at the next modeset. Property writes and connector reset can
+ * replace it.
+ */
+static int
+nv50_max_bpc_get(void *data, u64 *val)
+{
+	struct drm_connector *connector = data;
+	struct drm_device *dev = connector->dev;
+
+	drm_modeset_lock(&dev->mode_config.connection_mutex, NULL);
+	*val = connector->state->max_requested_bpc;
+	drm_modeset_unlock(&dev->mode_config.connection_mutex);
+	return 0;
+}
+
+static int
+nv50_max_bpc_set(void *data, u64 val)
+{
+	struct drm_connector *connector = data;
+	struct drm_device *dev = connector->dev;
+	const struct drm_property *prop = connector->max_bpc_property;
+
+	if (val < prop->values[0] || val > prop->values[1])
+		return -EINVAL;
+
+	drm_modeset_lock(&dev->mode_config.connection_mutex, NULL);
+	connector->state->max_requested_bpc = val;
+	drm_modeset_unlock(&dev->mode_config.connection_mutex);
+	return 0;
+}
+
+DEFINE_DEBUGFS_ATTRIBUTE(nv50_max_bpc_fops, nv50_max_bpc_get, nv50_max_bpc_set,
+			 "%llu\n");
+
 void
 nv50_connector_debugfs_init(struct drm_connector *connector, struct dentry *root)
 {
@@ -1645,6 +1680,10 @@ nv50_connector_debugfs_init(struct drm_connector *connector, struct dentry *root
 
 	debugfs_create_file("link_config", 0444, root, connector,
 			    &nv50_link_config_fops);
+
+	if (connector->max_bpc_property)
+		debugfs_create_file_unsafe("max_bpc", 0644, root, connector,
+					   &nv50_max_bpc_fops);
 }
 
 static int
@@ -1660,6 +1699,10 @@ nv50_mstc_debugfs_init(struct drm_connector *connector, struct dentry *root)
 {
 	debugfs_create_file("link_config", 0444, root, connector,
 			    &nv50_mst_link_config_fops);
+
+	if (connector->max_bpc_property)
+		debugfs_create_file_unsafe("max_bpc", 0644, root, connector,
+					   &nv50_max_bpc_fops);
 }
 
 static const struct drm_connector_funcs
