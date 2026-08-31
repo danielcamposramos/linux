@@ -1309,6 +1309,7 @@ nouveau_connector_funcs = {
 	.atomic_get_property = nouveau_conn_atomic_get_property,
 	.late_register = nouveau_connector_late_register,
 	.early_unregister = nouveau_connector_early_unregister,
+	.debugfs_init = nv50_connector_debugfs_init,
 };
 
 static const struct drm_connector_funcs
@@ -1326,6 +1327,7 @@ nouveau_connector_funcs_lvds = {
 	.atomic_get_property = nouveau_conn_atomic_get_property,
 	.late_register = nouveau_connector_late_register,
 	.early_unregister = nouveau_connector_early_unregister,
+	.debugfs_init = nv50_connector_debugfs_init,
 };
 
 void

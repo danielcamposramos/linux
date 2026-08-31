@@ -29,6 +29,9 @@
 #include "handles.h"
 
 #include <linux/backlight.h>
+#include <linux/debugfs.h>
+#include <linux/seq_file.h>
+#include <linux/string_choices.h>
 #include <linux/dma-mapping.h>
 #include <linux/hdmi.h>
 #include <linux/component.h>
@@ -1504,6 +1507,161 @@ nv50_mstc_destroy(struct drm_connector *connector)
 	kfree(mstc);
 }
 
+/******************************************************************************
+ * Connector debugfs
+ *****************************************************************************/
+
+/* Show probed limits alongside committed state to diagnose link setup. */
+static const char *
+nv50_link_config_or_depth_str(u8 depth)
+{
+	switch (depth) {
+	case 8: return "36 bpp";
+	case 6: return "30 bpp";
+	case 5: return "24 bpp";
+	case 2: return "18 bpp";
+	case 0: return "default (24 bpp on GV100+)";
+	default: return "?";
+	}
+}
+
+static int
+nv50_link_config_print(struct seq_file *m, struct drm_connector *connector,
+		       bool mst)
+{
+	struct drm_device *dev = connector->dev;
+	const struct drm_display_info *info = &connector->display_info;
+	struct drm_modeset_acquire_ctx ctx;
+	struct nouveau_encoder *nv_encoder = NULL;
+	struct drm_connector_state *conn_state;
+	struct drm_encoder *encoder;
+	struct drm_crtc *crtc;
+	bool committed = false;
+	int ret;
+
+	/* Probed data needs mode_config.mutex, while routing and CRTC state
+	 * need the modeset locks. An acquire context lets us back off if a
+	 * concurrent atomic commit would deadlock.
+	 */
+	mutex_lock(&dev->mode_config.mutex);
+	DRM_MODESET_LOCK_ALL_BEGIN(dev, ctx, DRM_MODESET_ACQUIRE_INTERRUPTIBLE,
+				   ret);
+
+	seq_printf(m, "connector: %s, %s\n",
+		   drm_get_connector_type_name(connector->connector_type),
+		   drm_get_connector_status_name(connector->status));
+
+	conn_state = connector->state;
+	encoder = conn_state ? conn_state->best_encoder : NULL;
+	if (!mst)
+		nv_encoder = nouveau_connector(connector)->detected_encoder;
+	if (encoder)
+		nv_encoder = nv50_real_outp(encoder);
+
+	if (connector->status == connector_status_connected && nv_encoder) {
+		if (nv_encoder->dcb->type == DCB_OUTPUT_TMDS && info->is_hdmi) {
+			seq_printf(m, "sink: scdc %s, scrambling %s, low-rate-scrambling %s\n",
+				   str_yes_no(info->hdmi.scdc.supported),
+				   str_yes_no(info->hdmi.scdc.scrambling.supported),
+				   str_yes_no(info->hdmi.scdc.scrambling.low_rates));
+			seq_printf(m, "tmds: edid max %d kHz, ceiling %u kHz\n",
+				   info->max_tmds_clock,
+				   nouveau_connector_tmds_link_bandwidth(connector));
+			seq_printf(m, "allm: %s\n", str_yes_no(info->hdmi.allm));
+			if (info->hdmi.vrr_cap.supported)
+				seq_printf(m, "vrr range: %u-%u Hz\n",
+					   info->hdmi.vrr_cap.vrr_min,
+					   info->hdmi.vrr_cap.vrr_max);
+			else
+				seq_puts(m, "vrr range: none\n");
+		} else if (nv_encoder->dcb->type == DCB_OUTPUT_DP) {
+			seq_printf(m, "dp: sink max %d lanes @ %d kHz\n",
+				   nv_encoder->dp.link_nr, nv_encoder->dp.link_bw);
+		}
+
+		/* Probed depth, including driver limits and fallback values. */
+		seq_printf(m, "depth: probed %u bpc, property cap %u\n",
+			   info->bpc, conn_state ? conn_state->max_requested_bpc : 0);
+	}
+
+	seq_puts(m, "--- committed ---\n");
+	crtc = conn_state ? conn_state->crtc : NULL;
+	if (crtc && crtc->state && crtc->state->active && encoder && nv_encoder) {
+		const struct nv50_head_atom *armh = nv50_head_atom(crtc->state);
+		const struct drm_display_mode *mode = &crtc->state->adjusted_mode;
+
+		seq_printf(m, "mode: %dx%d @ %d kHz\n",
+			   mode->hdisplay, mode->vdisplay, mode->clock);
+
+		if (nv_encoder->dcb->type == DCB_OUTPUT_TMDS) {
+			seq_printf(m, "protocol: TMDS%s\n", info->is_hdmi ? " (HDMI)" : "");
+		} else if (nv_encoder->dcb->type == DCB_OUTPUT_DP) {
+			/* Training may use fewer lanes or a lower rate than
+			 * the probed limits.
+			 */
+			if (nv_encoder->dp.lt.nr)
+				seq_printf(m, "protocol: DP %s, %d lanes @ %d kHz\n",
+					   nv_encoder->dp.lt.mst ? "MST" : "SST",
+					   nv_encoder->dp.lt.nr, nv_encoder->dp.lt.bw);
+			else
+				seq_puts(m, "protocol: DP, link down\n");
+			if (mst)
+				seq_printf(m, "mst: pbn %u, tu %u\n",
+					   armh->dp.pbn, armh->dp.tu);
+		}
+
+		seq_printf(m, "depth: %u bpc (or.depth %s)\n", armh->or.bpc,
+			   nv50_link_config_or_depth_str(armh->or.depth));
+
+		if (nv50_disp(dev)->tile.nr_tiles && armh->mtc.tiles_mask)
+			seq_printf(m, "tiles: mask %#04x (%d), phywins %#010x/%#010x\n",
+				   armh->mtc.tiles_mask,
+				   hweight8(armh->mtc.tiles_mask),
+				   armh->mtc.phywins_mask[0],
+				   armh->mtc.phywins_mask[1]);
+
+		committed = true;
+	}
+	if (!committed)
+		seq_puts(m, "inactive\n");
+
+	DRM_MODESET_LOCK_ALL_END(dev, ctx, ret);
+	mutex_unlock(&dev->mode_config.mutex);
+	return ret;
+}
+
+static int
+nv50_link_config_show(struct seq_file *m, void *data)
+{
+	return nv50_link_config_print(m, m->private, false);
+}
+DEFINE_SHOW_ATTRIBUTE(nv50_link_config);
+
+void
+nv50_connector_debugfs_init(struct drm_connector *connector, struct dentry *root)
+{
+	if (nouveau_display(connector->dev)->disp.object.oclass < NV50_DISP)
+		return;
+
+	debugfs_create_file("link_config", 0444, root, connector,
+			    &nv50_link_config_fops);
+}
+
+static int
+nv50_mst_link_config_show(struct seq_file *m, void *data)
+{
+	return nv50_link_config_print(m, m->private, true);
+}
+DEFINE_SHOW_ATTRIBUTE(nv50_mst_link_config);
+
+/* MST connectors use nv50_mstc, so they need a separate callback. */
+static void
+nv50_mstc_debugfs_init(struct drm_connector *connector, struct dentry *root)
+{
+	debugfs_create_file("link_config", 0444, root, connector,
+			    &nv50_mst_link_config_fops);
+}
+
 static const struct drm_connector_funcs
 nv50_mstc = {
 	.reset = nouveau_conn_reset,
@@ -1513,6 +1671,7 @@ nv50_mstc = {
 	.atomic_destroy_state = nouveau_conn_atomic_destroy_state,
 	.atomic_set_property = nouveau_conn_atomic_set_property,
 	.atomic_get_property = nouveau_conn_atomic_get_property,
+	.debugfs_init = nv50_mstc_debugfs_init,
 };
 
 static int

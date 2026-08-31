@@ -209,6 +209,8 @@ nouveau_crtc_connector_get(struct nouveau_crtc *nv_crtc)
 struct drm_connector *
 nouveau_connector_create(struct drm_device *, int id);
 unsigned int nouveau_connector_tmds_link_bandwidth(struct drm_connector *);
+struct dentry;
+void nv50_connector_debugfs_init(struct drm_connector *, struct dentry *);
 void nouveau_connector_hpd(struct nouveau_connector *, u64 bits);
 
 extern int nouveau_tv_disable;
