@@ -118,7 +118,12 @@ nv50_head_atomic_check_dither(struct nv50_head_atom *armh,
 		}
 
 		if (asyc->dither.depth == DITHERING_DEPTH_AUTO) {
-			if (asyh->or.bpc >= 8)
+			/* There is no 12 bpc dither depth, so disable dithering
+			 * when the depth is automatic.
+			 */
+			if (asyh->or.bpc >= 12)
+				mode = 0;
+			else if (asyh->or.bpc >= 8)
 				mode |= DITHERING_DEPTH_8BPC;
 		} else {
 			mode |= asyc->dither.depth;
@@ -457,7 +462,8 @@ nv50_head_atomic_check(struct drm_crtc *crtc, struct drm_atomic_commit *state)
 			if (asyc) {
 				if (asyh->state.mode_changed)
 					asyc->set.scaler = true;
-				if (armh->base.depth != asyh->base.depth)
+				if (armh->base.depth != asyh->base.depth ||
+				    armh->or.bpc != asyh->or.bpc)
 					asyc->set.dither = true;
 			}
 		} else {

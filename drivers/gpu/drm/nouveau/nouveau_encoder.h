@@ -168,6 +168,20 @@ enum drm_mode_status nv50_dp_mode_valid(struct nouveau_encoder *,
 
 enum drm_mode_status nv50_imp_mode_valid(struct drm_connector *,
 					 const struct drm_display_mode *);
+/* At 10 bpc, HDMI has a 324 MHz pixel clock limit on Ampere and later,
+ * in addition to the TMDS character-rate limit that applies at all depths.
+ */
+#define NOUVEAU_HDMI_TMDS_10BPC_MAX_CLOCK 324000
+
+static inline bool
+nouveau_hdmi_tmds_possible(unsigned int max_tmds_clock, unsigned int clock,
+			   u8 bpc)
+{
+	if (bpc == 10 && clock > NOUVEAU_HDMI_TMDS_10BPC_MAX_CLOCK)
+		return false;
+	return clock * bpc / 8 <= max_tmds_clock;
+}
+
 struct nouveau_connector *
 nv50_outp_get_new_connector(struct drm_atomic_commit *state, struct nouveau_encoder *outp);
 struct nouveau_connector *

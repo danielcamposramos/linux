@@ -164,7 +164,8 @@ gv100_sor_hdmi_ctrl(struct nvkm_ior *ior, int head, bool enable, u8 max_ac_packe
 
 	/* General Control (GCP). */
 	nvkm_mask(device, 0x6f00c0 + hdmi, 0x00000001, 0x00000000);
-	nvkm_wr32(device, 0x6f00cc + hdmi, 0x00000010);
+	nvkm_mask(device, 0x6f00cc + hdmi, 0x00ffffff,
+		  (ior->asy.outp->hdmi_gcp_sb1 << 8) | 0x00000010);
 	nvkm_mask(device, 0x6f00c0 + hdmi, 0x00000001, 0x00000001);
 
 	/* Audio Clock Regeneration (ACR). */
@@ -309,6 +310,7 @@ gv100_head_state(struct nvkm_head *head, struct nvkm_head_state *state)
 	state->or.nhsync = (data & 0x00000004) != 0;
 	state->or.nvsync = (data & 0x00000008) != 0;
 	switch ((data & 0x000000f0) >> 4) {
+	case 7: state->or.depth = 36; break;
 	case 5: state->or.depth = 30; break;
 	case 4: state->or.depth = 24; break;
 	case 1: state->or.depth = 18; break;

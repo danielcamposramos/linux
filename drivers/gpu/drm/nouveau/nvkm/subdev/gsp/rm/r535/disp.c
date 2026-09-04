@@ -550,7 +550,7 @@ r535_sor_hdmi_ctrl_audio(struct nvkm_outp *outp, bool enable)
 	ctrl->aPacket[1] = 0x00;
 	ctrl->aPacket[2] = 0x00;
 	ctrl->aPacket[3] = enable ? 0x10 : 0x01;
-	ctrl->aPacket[4] = 0x00;
+	ctrl->aPacket[4] = outp->hdmi_gcp_sb1;
 	ctrl->aPacket[5] = 0x00;
 	ctrl->aPacket[6] = 0x00;
 	ctrl->aPacket[7] = 0x00;
@@ -585,8 +585,12 @@ r535_sor_hdmi_ctrl(struct nvkm_ior *sor, int head, bool enable, u8 max_ac_packet
 	struct nvkm_disp *disp = sor->disp;
 	NV0073_CTRL_SPECIFIC_SET_HDMI_ENABLE_PARAMS *ctrl;
 
-	if (!enable)
+	/* The GCP also carries video depth, so send it even without audio. */
+	if (!enable) {
+		r535_sor_hdmi_ctrl_audio(sor->asy.outp, false);
+		disp->func->gsp.hdmi_gcp(sor, head, false);
 		return;
+	}
 
 	ctrl = nvkm_gsp_rm_ctrl_get(&disp->rm.objcom,
 				    NV0073_CTRL_CMD_SPECIFIC_SET_HDMI_ENABLE, sizeof(*ctrl));
@@ -597,6 +601,9 @@ r535_sor_hdmi_ctrl(struct nvkm_ior *sor, int head, bool enable, u8 max_ac_packet
 	ctrl->enable = enable;
 
 	WARN_ON(nvkm_gsp_rm_ctrl_wr(&disp->rm.objcom, ctrl));
+
+	r535_sor_hdmi_ctrl_audio(sor->asy.outp, true);
+	disp->func->gsp.hdmi_gcp(sor, head, true);
 }
 
 static const struct nvkm_ior_func_hdmi

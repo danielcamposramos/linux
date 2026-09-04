@@ -224,9 +224,10 @@ nvif_outp_infoframe(struct nvif_outp *outp, u8 type, struct nvif_outp_infoframe_
 
 int
 nvif_outp_hdmi(struct nvif_outp *outp, int head, bool enable, u8 max_ac_packet, u8 rekey,
-	       u32 khz, bool scdc, bool scdc_scrambling, bool scdc_low_rates)
+	       u32 khz, bool scdc, bool scdc_scrambling, bool scdc_low_rates,
+	       u8 gcp_sb1)
 {
-	struct nvif_outp_hdmi_v0 args;
+	struct nvif_outp_hdmi_v0 args = {};
 	int ret;
 
 	args.version = 0;
@@ -238,13 +239,14 @@ nvif_outp_hdmi(struct nvif_outp *outp, int head, bool enable, u8 max_ac_packet, 
 	args.scdc = scdc;
 	args.scdc_scrambling = scdc_scrambling;
 	args.scdc_low_rates = scdc_low_rates;
+	args.gcp_sb1 = gcp_sb1;
 
 	ret = nvif_mthd(&outp->object, NVIF_OUTP_V0_HDMI, &args, sizeof(args));
 	NVIF_ERRON(ret, &outp->object,
 		   "[HDMI head:%d enable:%d max_ac_packet:%d rekey:%d khz:%d scdc:%d "
-		   "scdc_scrambling:%d scdc_low_rates:%d]",
+		   "scdc_scrambling:%d scdc_low_rates:%d gcp_sb1:%02x]",
 		   args.head, args.enable, args.max_ac_packet, args.rekey, args.khz,
-		   args.scdc, args.scdc_scrambling, args.scdc_low_rates);
+		   args.scdc, args.scdc_scrambling, args.scdc_low_rates, args.gcp_sb1);
 	return ret;
 }
 

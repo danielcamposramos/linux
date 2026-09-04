@@ -23,6 +23,7 @@
 #include "priv.h"
 #include "head.h"
 #include "ior.h"
+#include "outp.h"
 
 #include <core/gpuobj.h>
 #include <subdev/gsp.h>
@@ -30,9 +31,8 @@
 
 #include <nvif/class.h>
 
-/* General Control Packet: bracket an audio enable/disable with AVMute
- * through the legacy GCP SF unit. Used by the GSP-RM path, which sends the
- * equivalent packet via RM as well but keeps the direct write in sync.
+/* Keep the legacy GCP unit in sync with the packet sent through GSP-RM
+ * when HDMI or audio is enabled or disabled.
  */
 void
 tu102_sor_hdmi_gcp(struct nvkm_ior *sor, int head, bool enable)
@@ -41,7 +41,9 @@ tu102_sor_hdmi_gcp(struct nvkm_ior *sor, int head, bool enable)
 	const u32 hdmi = head * 0x400;
 
 	nvkm_mask(device, 0x6f00c0 + hdmi, 0x00000001, 0x00000000);
-	nvkm_wr32(device, 0x6f00cc + hdmi, !enable ? 0x00000001 : 0x00000010);
+	/* SB0: AVMute, SB1: color depth/packing phase, SB2: zero. */
+	nvkm_mask(device, 0x6f00cc + hdmi, 0x00ffffff,
+		  (sor->asy.outp->hdmi_gcp_sb1 << 8) | (!enable ? 0x00000001 : 0x00000010));
 	nvkm_mask(device, 0x6f00c0 + hdmi, 0x00000001, 0x00000001);
 }
 

@@ -457,6 +457,7 @@ gf119_head_state(struct nvkm_head *head, struct nvkm_head_state *state)
 	state->or.nhsync = (data & 0x00000008) != 0;
 	state->or.nvsync = (data & 0x00000010) != 0;
 	switch ((data & 0x000003c0) >> 6) {
+	case 8: state->or.depth = 36; break;
 	case 6: state->or.depth = 30; break;
 	case 5: state->or.depth = 24; break;
 	case 2: state->or.depth = 18; break;

@@ -1114,16 +1114,22 @@ nouveau_connector_get_modes(struct drm_connector *connector)
 	return ret;
 }
 
-static unsigned
-get_tmds_link_bandwidth(struct drm_connector *connector)
+unsigned int
+nouveau_connector_tmds_link_bandwidth(struct drm_connector *connector)
 {
 	struct nouveau_connector *nv_connector = nouveau_connector(connector);
 	struct nouveau_encoder *nv_encoder = nv_connector->detected_encoder;
 	struct nouveau_drm *drm = nouveau_drm(connector->dev);
-	struct dcb_output *dcb = nv_connector->detected_encoder->dcb;
 	struct drm_display_info *info = NULL;
-	unsigned duallink_scale =
-		nouveau_duallink && nv_encoder->dcb->duallink_possible ? 2 : 1;
+	struct dcb_output *dcb;
+	unsigned int duallink_scale;
+
+	/* No detected encoder is available to determine the link limit. */
+	if (!nv_encoder)
+		return 0;
+
+	dcb = nv_encoder->dcb;
+	duallink_scale = nouveau_duallink && dcb->duallink_possible ? 2 : 1;
 
 	if (nv_connector->base.display_info.is_hdmi) {
 		info = &nv_connector->base.display_info;
@@ -1193,7 +1199,7 @@ nouveau_connector_mode_valid(struct drm_connector *connector,
 		max_clock = 400000;
 		break;
 	case DCB_OUTPUT_TMDS:
-		max_clock = get_tmds_link_bandwidth(connector);
+		max_clock = nouveau_connector_tmds_link_bandwidth(connector);
 		break;
 	case DCB_OUTPUT_ANALOG:
 		max_clock = nv_encoder->dcb->crtconf.maxfreq;

@@ -35,10 +35,9 @@ headc37d_or(struct nv50_head *head, struct nv50_head_atom *asyh)
 	u8 depth;
 	int ret;
 
-	/*XXX: This is a dirty hack until OR depth handling is
-	 *     improved later for deep colour etc.
-	 */
+	/* The head uses different pixel depth encodings from the SOR. */
 	switch (asyh->or.depth) {
+	case 8: depth = 7; break;
 	case 6: depth = 5; break;
 	case 5: depth = 4; break;
 	case 2: depth = 1; break;

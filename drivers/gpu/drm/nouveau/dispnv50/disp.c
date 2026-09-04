@@ -407,13 +407,54 @@ nv50_outp_atomic_check_view(struct drm_encoder *encoder,
 	return 0;
 }
 
+/* Frame-packed 3D doubles the pixel clock, so TMDS calculations need
+ * the raster timings programmed by the head.
+ */
+static void
+nv50_hdmi_hw_mode(const struct drm_display_mode *mode,
+		  struct drm_display_mode *hw)
+{
+	*hw = *mode;
+	drm_mode_set_crtcinfo(hw, CRTC_INTERLACE_HALVE_V | CRTC_STEREO_DOUBLE);
+}
+
+/* Choose the highest depth up to bpc supported by both ends. Enable
+ * 12 bpc on Turing+ and 10 bpc on Ampere+. DVI remains at 8 bpc.
+ */
+static u8
+nv50_hdmi_fix_bpc(struct nv50_disp *disp, const struct drm_display_info *info,
+		  u8 bpc)
+{
+	const u32 oclass = disp->disp->object.oclass;
+
+	if (!info->is_hdmi)
+		return 8;
+	if (bpc >= 12 && oclass >= TU102_DISP &&
+	    (info->edid_hdmi_rgb444_dc_modes & DRM_EDID_HDMI_DC_36))
+		return 12;
+	if (bpc >= 10 && oclass >= GA102_DISP &&
+	    (info->edid_hdmi_rgb444_dc_modes & DRM_EDID_HDMI_DC_30))
+		return 10;
+	return 8;
+}
+
+/* Return the next supported depth, or zero if none is lower. */
+static u8
+nv50_hdmi_lower_bpc(struct nv50_disp *disp, const struct drm_display_info *info,
+		    u8 bpc)
+{
+	return bpc > 8 ? nv50_hdmi_fix_bpc(disp, info, bpc - 2) : 0;
+}
+
 static int
 nv50_outp_atomic_fix_depth(struct drm_encoder *encoder, struct drm_crtc_state *crtc_state,
 			   struct drm_connector *connector)
 {
 	struct nv50_head_atom *asyh = nv50_head_atom(crtc_state);
 	struct nouveau_encoder *nv_encoder = nouveau_encoder(encoder);
+	struct nv50_disp *disp = nv50_disp(encoder->dev);
 	struct drm_display_mode *mode = &asyh->state.adjusted_mode;
+	const struct drm_display_info *info = &connector->display_info;
 	unsigned int max_rate, mode_rate;
 	u8 min_bpc;
 	const struct drm_edid *edid = nouveau_connector(connector)->drm_edid;
@@ -443,6 +484,24 @@ nv50_outp_atomic_fix_depth(struct drm_encoder *encoder, struct drm_crtc_state *c
 		mode_rate = DIV_ROUND_UP(mode->clock * asyh->or.bpc * 3, 8);
 		if (mode_rate > max_rate)
 			return -EINVAL;
+		break;
+	case DCB_OUTPUT_TMDS:
+		/* The sink's deep color capability does not guarantee that the
+		 * selected mode fits the TMDS link.
+		 */
+		asyh->or.bpc = nv50_hdmi_fix_bpc(disp, info, asyh->or.bpc);
+		if (asyh->or.bpc > 8) {
+			const unsigned int tmds_max =
+				nouveau_connector_tmds_link_bandwidth(connector);
+			struct drm_display_mode hw;
+
+			nv50_hdmi_hw_mode(mode, &hw);
+			while (asyh->or.bpc > 8 &&
+			       !nouveau_hdmi_tmds_possible(tmds_max, hw.crtc_clock,
+							   asyh->or.bpc))
+				asyh->or.bpc = nv50_hdmi_lower_bpc(disp, info,
+								   asyh->or.bpc);
+		}
 		break;
 	default:
 		break;
@@ -939,12 +998,29 @@ nv50_hdmi_enable(struct drm_encoder *encoder, struct nouveau_crtc *nv_crtc,
 	struct nouveau_drm *drm = nouveau_drm(encoder->dev);
 	struct nouveau_encoder *nv_encoder = nouveau_encoder(encoder);
 	struct drm_hdmi_info *hdmi = &nv_connector->base.display_info.hdmi;
+	const struct nv50_head_atom *asyh =
+		nv50_head_atom(drm_atomic_get_new_crtc_state(state, &nv_crtc->base));
 	union hdmi_infoframe infoframe = { 0 };
 	const u8 rekey = 56; /* binary driver, and tegra, constant */
-	u32 max_ac_packet;
+	struct drm_display_mode hw;
+	u32 max_ac_packet, tmds_clock;
+	u8 gcp_sb1 = 0;
 	DEFINE_RAW_FLEX(struct nvif_outp_infoframe_v0, args, data, 17);
 	const u8 data_len = __member_size(args->data);
 	int ret, size;
+
+	/* The TMDS character rate is pixel clock * bpc / 8. Use that rate
+	 * for SCDC clock-ratio/scrambling setup and the firmware clock.
+	 */
+	nv50_hdmi_hw_mode(mode, &hw);
+	tmds_clock = hw.crtc_clock * asyh->or.bpc / 8;
+
+	/* At 12 bpc, GCP SB1 carries CD=6 and a packing phase selected by the
+	 * parity of the back porch plus active width.
+	 */
+	if (asyh->or.bpc == 12)
+		gcp_sb1 = 0x06 | ((hw.crtc_htotal - hw.crtc_hsync_end +
+				   hw.crtc_hdisplay) & 1 ? 0x10 : 0x20);
 
 	max_ac_packet  = mode->htotal - mode->hdisplay;
 	max_ac_packet -= rekey;
@@ -952,7 +1028,7 @@ nv50_hdmi_enable(struct drm_encoder *encoder, struct nouveau_crtc *nv_crtc,
 	max_ac_packet /= 32;
 
 	if (nv_encoder->i2c && hdmi->scdc.scrambling.supported) {
-		const bool high_tmds_clock_ratio = mode->clock > 340000;
+		const bool high_tmds_clock_ratio = tmds_clock > 340000;
 		u8 scdc;
 
 		ret = drm_scdc_readb(nv_encoder->i2c, SCDC_TMDS_CONFIG, &scdc);
@@ -974,8 +1050,8 @@ nv50_hdmi_enable(struct drm_encoder *encoder, struct nouveau_crtc *nv_crtc,
 	}
 
 	ret = nvif_outp_hdmi(&nv_encoder->outp, nv_crtc->index, true, max_ac_packet, rekey,
-			     mode->clock, hdmi->scdc.supported, hdmi->scdc.scrambling.supported,
-			     hdmi->scdc.scrambling.low_rates);
+			     tmds_clock, hdmi->scdc.supported, hdmi->scdc.scrambling.supported,
+			     hdmi->scdc.scrambling.low_rates, gcp_sb1);
 	if (ret)
 		return;
 
@@ -1180,6 +1256,7 @@ nv50_dp_bpc_to_depth(unsigned int bpc)
 	switch (bpc) {
 	case  6: return NV837D_SOR_SET_CONTROL_PIXEL_DEPTH_BPP_18_444;
 	case  8: return NV837D_SOR_SET_CONTROL_PIXEL_DEPTH_BPP_24_444;
+	case 12: return NV837D_SOR_SET_CONTROL_PIXEL_DEPTH_BPP_36_444;
 	case 10:
 	default: return NV837D_SOR_SET_CONTROL_PIXEL_DEPTH_BPP_30_444;
 	}
@@ -1763,7 +1840,7 @@ nv50_sor_atomic_disable(struct drm_encoder *encoder, struct drm_atomic_commit *s
 
 	if (nv_encoder->dcb->type == DCB_OUTPUT_TMDS && nv_encoder->hdmi.enabled) {
 		nvif_outp_hdmi(&nv_encoder->outp, head->base.index,
-			       false, 0, 0, 0, false, false, false);
+			       false, 0, 0, 0, false, false, false, 0);
 		nv_encoder->hdmi.enabled = false;
 	}
 
@@ -1959,6 +2036,12 @@ nv50_sor_atomic_enable(struct drm_encoder *encoder, struct drm_atomic_commit *st
 		if (disp->disp->object.oclass != NV50_DISP &&
 		    nv_connector->base.display_info.is_hdmi)
 			nv50_hdmi_enable(encoder, nv_crtc, nv_connector, state, mode, hda);
+
+		/* Keep the default SOR encoding at 8 bpc. Deep color needs
+		 * an explicit depth.
+		 */
+		if (asyh->or.bpc > 8)
+			depth = nv50_dp_bpc_to_depth(asyh->or.bpc);
 
 		if (nv_encoder->outp.or.link & 1) {
 			proto = NV507D_SOR_SET_CONTROL_PROTOCOL_SINGLE_TMDS_A;

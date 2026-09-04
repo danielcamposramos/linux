@@ -5,6 +5,7 @@
 #include "priv.h"
 #include "head.h"
 #include "ior.h"
+#include "outp.h"
 
 #include <linux/math64.h>
 
@@ -67,11 +68,8 @@ gb202_sor_hdmi_infoframe_vsi(struct nvkm_ior *ior, int head, void *data, u32 siz
 	nvkm_wr32(device, 0x6f03f8 + hoff, 0x00000002);
 }
 
-/* General Control Packet AVMute bracket. The GCP unit moved to slot 1 on
- * NVD5.0. Only SB0 (the AVMute bit) is ours to write so we must not do a
- * full write here: SB1 carries the deep-color CD/PP fields, and SB1_CTRL
- * (bit 24, new with clc871.h) controls where their generation happens (HW
- * or driver) on these chips, with the default being HW.
+/* NVD5.0 uses GCP slot 1. Mask SB0-SB2 to preserve SB1_CTRL (bit 24),
+ * which defaults to hardware generation of the deep color fields.
  */
 static void
 gb202_sor_hdmi_gcp(struct nvkm_ior *sor, int head, bool enable)
@@ -80,8 +78,8 @@ gb202_sor_hdmi_gcp(struct nvkm_ior *sor, int head, bool enable)
 	const u32 hdmi = head * 0x400;
 
 	nvkm_mask(device, 0x6f0040 + hdmi, 0x00000001, 0x00000000);
-	nvkm_mask(device, 0x6f004c + hdmi, 0x000000ff, !enable ? 0x00000001 :
-								 0x00000010);
+	nvkm_mask(device, 0x6f004c + hdmi, 0x00ffffff,
+		  (sor->asy.outp->hdmi_gcp_sb1 << 8) | (!enable ? 0x00000001 : 0x00000010));
 	nvkm_mask(device, 0x6f0040 + hdmi, 0x00000001, 0x00000001);
 }
 
@@ -140,6 +138,7 @@ gb202_head_state(struct nvkm_head *head, struct nvkm_head_state *state)
 	switch ((data & 0x000000f0) >> 4) {
 	case 10: state->or.depth = 18; break; /* BPP_18_444NP */
 	case 9: state->or.depth = 16; break;
+	case 7: state->or.depth = 36; break;
 	case 5: state->or.depth = 30; break;
 	case 4: state->or.depth = 24; break;
 	case 1: state->or.depth = 18; break;

@@ -25,6 +25,8 @@ struct nvkm_outp {
 #define NVKM_OUTP_USER 2
 	u8 acquired:2;
 	struct nvkm_ior *ior;
+	/* GCP SB1 color depth and packing phase. */
+	u8 hdmi_gcp_sb1;
 
 	union {
 		struct {

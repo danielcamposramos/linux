@@ -98,6 +98,7 @@ nvkm_outp_release_or(struct nvkm_outp *outp, u8 user)
 		if (!outp->acquired) {
 			outp->ior->asy.outp = NULL;
 			outp->ior = NULL;
+			outp->hdmi_gcp_sb1 = 0;
 		}
 	}
 }

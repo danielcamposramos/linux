@@ -104,6 +104,7 @@ nv50_pior_depth(struct nvkm_ior *ior, struct nvkm_ior_state *state, u32 ctrl)
 		if (!WARN_ON(!head)) {
 			struct nvkm_head_state *state = &head->asy;
 			switch ((ctrl & 0x000f0000) >> 16) {
+			case 8: state->or.depth = 36; break;
 			case 6: state->or.depth = 30; break;
 			case 5: state->or.depth = 24; break;
 			case 2: state->or.depth = 18; break;
