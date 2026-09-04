@@ -407,33 +407,48 @@ nv50_outp_atomic_check_view(struct drm_encoder *encoder,
 	return 0;
 }
 
-static void
-nv50_outp_atomic_fix_depth(struct drm_encoder *encoder, struct drm_crtc_state *crtc_state)
+static int
+nv50_outp_atomic_fix_depth(struct drm_encoder *encoder, struct drm_crtc_state *crtc_state,
+			   struct drm_connector *connector)
 {
 	struct nv50_head_atom *asyh = nv50_head_atom(crtc_state);
 	struct nouveau_encoder *nv_encoder = nouveau_encoder(encoder);
 	struct drm_display_mode *mode = &asyh->state.adjusted_mode;
 	unsigned int max_rate, mode_rate;
+	u8 min_bpc;
+	const struct drm_edid *edid = nouveau_connector(connector)->drm_edid;
 
 	switch (nv_encoder->dcb->type) {
 	case DCB_OUTPUT_DP:
 		max_rate = nv_encoder->dp.link_nr * nv_encoder->dp.link_bw;
+		/* PIOR training uses 6 bpc regardless of output depth. */
+		if (nv_encoder->dcb->location != DCB_LOC_ON_CHIP)
+			min_bpc = 6;
+		else
+			min_bpc = nouveau_dp_min_bpc(drm_edid_raw(edid));
 
-		/* we don't support more than 10 anyway */
-		asyh->or.bpc = min_t(u8, asyh->or.bpc, 10);
+		/* DP depth selection is limited to 10 bpc. */
+		asyh->or.bpc = clamp_t(u8, asyh->or.bpc, min_bpc, 10);
 
-		/* reduce the bpc until it works out */
-		while (asyh->or.bpc > 6) {
+		/* Try lower depths to fit the link bandwidth. */
+		while (asyh->or.bpc > min_bpc) {
 			mode_rate = DIV_ROUND_UP(mode->clock * asyh->or.bpc * 3, 8);
 			if (mode_rate <= max_rate)
 				break;
 
 			asyh->or.bpc -= 2;
 		}
+
+		/* Even minimum bpc may exceed the link budget. */
+		mode_rate = DIV_ROUND_UP(mode->clock * asyh->or.bpc * 3, 8);
+		if (mode_rate > max_rate)
+			return -EINVAL;
 		break;
 	default:
 		break;
 	}
+
+	return 0;
 }
 
 static int
@@ -451,11 +466,21 @@ nv50_outp_atomic_check(struct drm_encoder *encoder,
 	if (ret)
 		return ret;
 
-	if (crtc_state->mode_changed || crtc_state->connectors_changed)
+	if (crtc_state->mode_changed || crtc_state->connectors_changed) {
 		asyh->or.bpc = connector->display_info.bpc;
+		/* The property accepts odd values, but wire depths are even.
+		 * Round the cap down so the fallback encoding cannot exceed
+		 * the depth used for bandwidth validation.
+		 */
+		if (conn_state->max_requested_bpc)
+			asyh->or.bpc = min_t(u8, asyh->or.bpc,
+					     conn_state->max_requested_bpc & ~1);
+	}
 
-	/* We might have to reduce the bpc */
-	nv50_outp_atomic_fix_depth(encoder, crtc_state);
+	/* Check the selected depth against the link limits. */
+	ret = nv50_outp_atomic_fix_depth(encoder, crtc_state, connector);
+	if (ret)
+		return ret;
 
 	return 0;
 }
@@ -1122,6 +1147,11 @@ nv50_msto_atomic_check(struct drm_encoder *encoder,
 		const int clock = crtc_state->adjusted_mode.clock;
 
 		asyh->or.bpc = connector->display_info.bpc;
+		/* Round down so PBN uses an encodable depth. */
+		if (conn_state->max_requested_bpc)
+			asyh->or.bpc = min_t(u8, asyh->or.bpc,
+					     conn_state->max_requested_bpc & ~1);
+		asyh->or.bpc = max(asyh->or.bpc, nouveau_dp_min_bpc(mstc->edid));
 		asyh->dp.pbn = drm_dp_calc_pbn_mode(clock, asyh->or.bpc * 3 << 4);
 	}
 
@@ -1303,7 +1333,7 @@ nv50_mstc_mode_valid(struct drm_connector *connector,
 	 * MSTB's max possible PBN
 	 */
 
-	status = nv50_dp_mode_valid(outp, mode, NULL);
+	status = nv50_dp_mode_valid(outp, mode, nouveau_dp_min_bpc(mstc->edid), NULL);
 	if (status != MODE_OK ||
 	    !nouveau_display(connector->dev)->disp_imp)
 		return status;

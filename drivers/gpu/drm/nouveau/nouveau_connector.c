@@ -267,6 +267,8 @@ nouveau_conn_reset(struct drm_connector *connector)
 	asyc->scaler.underscan.mode = UNDERSCAN_OFF;
 	asyc->procamp.color_vibrance = 150;
 	asyc->procamp.vibrant_hue = 90;
+	/* Restore the property's maximum after reset clears the state. */
+	asyc->state.max_requested_bpc = 16;
 
 	if (nouveau_display(connector->dev)->disp.object.oclass < NV50_DISP) {
 		switch (connector->connector_type) {
@@ -311,6 +313,17 @@ nouveau_conn_attach_properties(struct drm_connector *connector)
 					   disp->underscan_hborder_property, 0);
 		drm_object_attach_property(&connector->base,
 					   disp->underscan_vborder_property, 0);
+	}
+
+	/* DP can use 6 bpc, whereas TMDS needs at least 8 bpc. */
+	if (drm_drv_uses_atomic_modeset(dev)) {
+		if (connector->connector_type == DRM_MODE_CONNECTOR_DisplayPort ||
+		    connector->connector_type == DRM_MODE_CONNECTOR_eDP)
+			drm_connector_attach_max_bpc_property(connector, 6, 16);
+		else if (connector->connector_type == DRM_MODE_CONNECTOR_DVID ||
+			 connector->connector_type == DRM_MODE_CONNECTOR_DVII ||
+			 connector->connector_type == DRM_MODE_CONNECTOR_HDMIA)
+			drm_connector_attach_max_bpc_property(connector, 8, 16);
 	}
 
 	/* Add hue and saturation options. */
@@ -1190,8 +1203,11 @@ nouveau_connector_mode_valid(struct drm_connector *connector,
 	case DCB_OUTPUT_TV:
 		return get_encoder_i2c_funcs(encoder)->mode_valid(encoder, mode);
 	case DCB_OUTPUT_DP: {
+		/* PIOR training always uses 6 bpc. */
+		const u8 min_bpc = nv_encoder->dcb->location == DCB_LOC_ON_CHIP ?
+			nouveau_dp_min_bpc(drm_edid_raw(nv_connector->drm_edid)) : 6;
 		enum drm_mode_status status =
-			nv50_dp_mode_valid(nv_encoder, mode, NULL);
+			nv50_dp_mode_valid(nv_encoder, mode, min_bpc, NULL);
 
 		if (status != MODE_OK ||
 		    !nouveau_display(connector->dev)->disp_imp)

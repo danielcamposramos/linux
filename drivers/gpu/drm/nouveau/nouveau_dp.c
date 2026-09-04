@@ -23,6 +23,7 @@
  */
 
 #include <drm/display/drm_dp_helper.h>
+#include <drm/drm_edid.h>
 
 #include "nouveau_drv.h"
 #include "nouveau_connector.h"
@@ -525,18 +526,28 @@ nouveau_dp_irq(struct work_struct *work)
  * - Validate against the DP caps advertised by the GPU (we don't check these
  *   yet)
  */
+/* Match OpenRM's minimum depth policy: allow 6 bpc with digital EDID 1.4 or
+ * newer, otherwise assume 8 bpc.
+ */
+u8
+nouveau_dp_min_bpc(const struct edid *edid)
+{
+	if (edid && edid->revision >= 4 && (edid->input & DRM_EDID_INPUT_DIGITAL))
+		return 6;
+	return 8;
+}
+
 enum drm_mode_status
 nv50_dp_mode_valid(struct nouveau_encoder *outp,
 		   const struct drm_display_mode *mode,
-		   unsigned *out_clock)
+		   u8 min_bpc, unsigned *out_clock)
 {
 	const unsigned int min_clock = 25000;
 	unsigned int max_rate, mode_rate, ds_max_dotclock, clock = mode->clock;
-	/* Check with the minmum bpc always, so we can advertise better modes.
-	 * In particlar not doing this causes modes to be dropped on HDR
-	 * displays as we might check with a bpc of 16 even.
+	/* Probe at minimum bpc because atomic check can lower the depth to
+	 * fit the link. Using the sink's maximum would hide usable modes.
 	 */
-	const u8 bpp = 6 * 3;
+	const u8 bpp = min_bpc * 3;
 
 	if (mode->flags & DRM_MODE_FLAG_INTERLACE && !outp->caps.dp_interlace)
 		return MODE_NO_INTERLACE;

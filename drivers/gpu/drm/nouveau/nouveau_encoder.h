@@ -160,9 +160,11 @@ bool nouveau_dp_train(struct nouveau_encoder *, bool mst, u32 khz, u8 bpc);
 void nouveau_dp_power_down(struct nouveau_encoder *);
 bool nouveau_dp_link_check(struct nouveau_connector *);
 void nouveau_dp_irq(struct work_struct *);
+struct edid;
+u8 nouveau_dp_min_bpc(const struct edid *);
 enum drm_mode_status nv50_dp_mode_valid(struct nouveau_encoder *,
 					const struct drm_display_mode *,
-					unsigned *clock);
+					u8 min_bpc, unsigned *clock);
 
 enum drm_mode_status nv50_imp_mode_valid(struct drm_connector *,
 					 const struct drm_display_mode *);
