@@ -22,10 +22,36 @@ struct nvkm_head {
 		u16 vblanks;
 		u64 hz;
 
-		/* Prior to GF119, these are set by the OR. */
+		/* Viewport and scaler taps on GV100+. Zero vtaps marks missing
+		 * readback, so callers must ignore the viewport fields in that case.
+		 */
+		struct {
+			u16 iW;
+			u16 iH;
+			u16 oW;
+			u16 oH;
+			u8 vtaps;
+			u8 htaps;
+		} view;
+
+		bool interlace;
+
+		/* GF119+ reads depth and sync polarities from per-head methods.
+		 * Older classes get polarities from the owning OR, but
+		 * nv50_pior_depth() only supplies assembly depth. Armed depth
+		 * is not read back there.
+		 */
 		struct {
 			u8 depth;
+			bool nhsync;
+			bool nvsync;
 		} or;
+
+		/* GB20x tile and physical window ownership, zero on older classes. */
+		struct {
+			u8 tiles;
+			u32 phywins[2];
+		} mtc;
 	} arm, asy;
 
 	struct nvkm_object object;

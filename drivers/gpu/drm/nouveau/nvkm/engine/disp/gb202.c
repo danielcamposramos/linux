@@ -94,6 +94,7 @@ gb202_head_state(struct nvkm_head *head, struct nvkm_head_state *state)
 {
 	struct nvkm_device *device = head->disp->engine.subdev.device;
 	const u32 hoff = (state == &head->arm) * 0x8000 + head->id * 0x800;
+	const u32 aoff = hoff - head->id * 0x800;
 	u32 data;
 
 	data = nvkm_rd32(device, 0x682064 + hoff);
@@ -119,16 +120,43 @@ gb202_head_state(struct nvkm_head *head, struct nvkm_head_state *state)
 	if (data & 0x80000000)
 		state->hz = div_u64(state->hz * 1000, 1001);
 
+	/* STRUCTURE is 1:0, PROGRESSIVE is zero. */
+	state->interlace = (nvkm_rd32(device, 0x682008 + hoff) & 0x00000003) != 0;
+
+	/* Both scaler tap fields encode TAPS_2 as 1 and TAPS_5 as 4. */
+	data = nvkm_rd32(device, 0x68204c + hoff);
+	state->view.iW = (data & 0x00007fff);
+	state->view.iH = (data & 0x7fff0000) >> 16;
+	data = nvkm_rd32(device, 0x682058 + hoff);
+	state->view.oW = (data & 0x00007fff);
+	state->view.oH = (data & 0x7fff0000) >> 16;
+	data = nvkm_rd32(device, 0x682014 + hoff);
+	state->view.vtaps = (data & 0x00000007) >= 4 ? 5 : 2;
+	state->view.htaps = ((data & 0x00000070) >> 4) >= 4 ? 5 : 2;
+
 	data = nvkm_rd32(device, 0x682004 + hoff);
+	state->or.nhsync = (data & 0x00000004) != 0;
+	state->or.nvsync = (data & 0x00000008) != 0;
 	switch ((data & 0x000000f0) >> 4) {
+	case 10: state->or.depth = 18; break; /* BPP_18_444NP */
+	case 9: state->or.depth = 16; break;
 	case 5: state->or.depth = 30; break;
 	case 4: state->or.depth = 24; break;
 	case 1: state->or.depth = 18; break;
 	default:
 		state->or.depth = 18;
-		WARN_ON(1);
+		/* Takeover may query unused heads, which have no valid depth when
+		 * the raster is unset.
+		 */
+		WARN_ON(state->htotal && state->vtotal);
 		break;
 	}
+	/* Use the matching mirror for ownership too, so tile and window
+	 * assignments describe the same armed or assembly state as the raster.
+	 */
+	state->mtc.tiles = nvkm_rd32(device, 0x682060 + hoff) & 0x000000ff;
+	state->mtc.phywins[0] = nvkm_rd32(device, 0x681014 + (head->id * 2) * 0x80 + aoff);
+	state->mtc.phywins[1] = nvkm_rd32(device, 0x681014 + (head->id * 2 + 1) * 0x80 + aoff);
 }
 
 /* NVD5.0 (GB20x and later) moved the RM head-timing interrupt enable to

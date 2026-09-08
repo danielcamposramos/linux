@@ -285,6 +285,9 @@ g94_sor_state(struct nvkm_ior *sor, struct nvkm_ior_state *state)
 	}
 
 	state->head = ctrl & 0x00000003;
+	/* HSYNC_POLARITY is 12:12, VSYNC_POLARITY 13:13. */
+	state->nhsync = (ctrl & 0x00001000) != 0;
+	state->nvsync = (ctrl & 0x00002000) != 0;
 	nv50_pior_depth(sor, state, ctrl);
 }
 

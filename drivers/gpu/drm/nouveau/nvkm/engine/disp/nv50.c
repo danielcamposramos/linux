@@ -134,6 +134,9 @@ nv50_pior_state(struct nvkm_ior *pior, struct nvkm_ior_state *state)
 	}
 
 	state->head = ctrl & 0x00000003;
+	/* HSYNC_POLARITY is 12:12, VSYNC_POLARITY 13:13. */
+	state->nhsync = (ctrl & 0x00001000) != 0;
+	state->nvsync = (ctrl & 0x00002000) != 0;
 	nv50_pior_depth(pior, state, ctrl);
 }
 
@@ -248,6 +251,9 @@ nv50_sor_state(struct nvkm_ior *sor, struct nvkm_ior_state *state)
 	}
 
 	state->head = ctrl & 0x00000003;
+	/* HSYNC_POLARITY is 12:12, VSYNC_POLARITY 13:13. */
+	state->nhsync = (ctrl & 0x00001000) != 0;
+	state->nvsync = (ctrl & 0x00002000) != 0;
 }
 
 static const struct nvkm_ior_func
@@ -334,6 +340,7 @@ nv50_dac_state(struct nvkm_ior *dac, struct nvkm_ior_state *state)
 	struct nvkm_device *device = dac->disp->engine.subdev.device;
 	const u32 coff = dac->id * 8 + (state == &dac->arm) * 4;
 	u32 ctrl = nvkm_rd32(device, 0x610b58 + coff);
+	u32 data;
 
 	state->proto_evo = (ctrl & 0x00000f00) >> 8;
 	switch (state->proto_evo) {
@@ -344,6 +351,10 @@ nv50_dac_state(struct nvkm_ior *dac, struct nvkm_ior_state *state)
 	}
 
 	state->head = ctrl & 0x00000003;
+	/* DAC_SET_POLARITY: HSYNC is 0:0, VSYNC 1:1. */
+	data = nvkm_rd32(device, 0x610bdc + coff);
+	state->nhsync = (data & 0x00000001) != 0;
+	state->nvsync = (data & 0x00000002) != 0;
 }
 
 static const struct nvkm_ior_func
@@ -404,6 +415,33 @@ nv50_head_rgpos(struct nvkm_head *head, u16 *hline, u16 *vline)
 	*hline = nvkm_rd32(device, 0x616344 + hoff) & 0x0000ffff;
 }
 
+/* Before GF119, sync polarities belong to the OR. Its state hook selects
+ * the matching armed or assembly mirror, including the SOR mirror change
+ * at G94. Armed reads leave output associations and assembly depth
+ * unchanged, so vblank timestamp queries can share the path.
+ */
+static void
+nv50_head_state_or(struct nvkm_head *head, struct nvkm_head_state *state)
+{
+	const bool arm = state == &head->arm;
+	struct nvkm_ior *ior;
+
+	state->or.nhsync = false;
+	state->or.nvsync = false;
+
+	list_for_each_entry(ior, &head->disp->iors, head) {
+		struct nvkm_ior_state *ios = arm ? &ior->arm : &ior->asy;
+
+		ior->func->state(ior, ios);
+		if (!(ios->head & BIT(head->id)))
+			continue;
+
+		state->or.nhsync = ios->nhsync;
+		state->or.nvsync = ios->nvsync;
+		return;
+	}
+}
+
 static void
 nv50_head_state(struct nvkm_head *head, struct nvkm_head_state *state)
 {
@@ -428,6 +466,11 @@ nv50_head_state(struct nvkm_head *head, struct nvkm_head_state *state)
 	state->hz = (data & 0x003fffff) * 1000;
 	if (data & 0x01000000)
 		state->hz = div_u64(state->hz * 1000, 1001);
+
+	/* HEAD_SET_CONTROL: STRUCTURE is 2:1, PROGRESSIVE is zero. */
+	state->interlace = (nvkm_rd32(device, 0x610a48 + hoff) & 0x00000006) != 0;
+
+	nv50_head_state_or(head, state);
 }
 
 static const struct nvkm_head_func

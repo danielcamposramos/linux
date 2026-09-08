@@ -33,6 +33,9 @@ struct nvkm_ior {
 		} proto:3;
 		unsigned link:2;
 		unsigned head:8;
+		/* Prior to GF119 the sync polarities are OR methods. */
+		unsigned nhsync:1;
+		unsigned nvsync:1;
 	} arm, asy;
 
 	/* Armed DP state. */

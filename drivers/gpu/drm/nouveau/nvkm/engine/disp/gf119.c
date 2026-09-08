@@ -447,7 +447,15 @@ gf119_head_state(struct nvkm_head *head, struct nvkm_head_state *state)
 	if (data & 0x80000000)
 		state->hz = div_u64(state->hz * 1000, 1001);
 
+	/* HEAD_SET_CONTROL: STRUCTURE is 0:0, PROGRESSIVE is zero. */
+	state->interlace = (nvkm_rd32(device, 0x640408 + hoff) & 0x00000001) != 0;
+
+	/* HEAD_SET_CONTROL_OUTPUT_RESOURCE has HSYNC at bit 3 and VSYNC at bit
+	 * 4. C37D moves them to bits 2 and 3.
+	 */
 	data = nvkm_rd32(device, 0x640404 + hoff);
+	state->or.nhsync = (data & 0x00000008) != 0;
+	state->or.nvsync = (data & 0x00000010) != 0;
 	switch ((data & 0x000003c0) >> 6) {
 	case 6: state->or.depth = 30; break;
 	case 5: state->or.depth = 24; break;
