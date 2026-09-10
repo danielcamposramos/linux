@@ -28,6 +28,37 @@ void nv50_head_flush_set_wndw(struct nv50_head *head, struct nv50_head_atom *asy
 void nv50_head_flush_clr(struct nv50_head *head,
 			 struct nv50_head_atom *asyh, bool flush);
 
+/* Compute idle lines around the output viewport. Interlaced vblank uses
+ * field coordinates while the viewport height covers a frame, so these
+ * timings need the caller's fallback rather than this calculation.
+ */
+static inline bool
+nv50_head_min_frame_idle(const struct nv50_head_atom *asyh, u16 *leading, u16 *trailing)
+{
+	const u16 active = asyh->mode.v.blanks - asyh->mode.v.blanke;
+	/* Aspect ratio rounding can exceed the active raster by a line, so
+	 * use the IMP request's clamp to program the same idle counts.
+	 */
+	const u16 idle_h = min_t(u16, asyh->view.oH, active);
+	int overscan, lead;
+
+	if (asyh->mode.interlace)
+		return false;
+
+	overscan = active / 2 - idle_h / 2;
+	lead = asyh->mode.v.blanke + overscan + 1;
+
+	/* Vsync and the back porch each need a line. The viewport must end
+	 * within the frame to keep the trailing count from underflowing.
+	 */
+	if (lead < 2 || lead + idle_h > asyh->mode.v.active)
+		return false;
+
+	*leading = lead;
+	*trailing = asyh->mode.v.active - (lead + idle_h);
+	return true;
+}
+
 struct nv50_head_func {
 	int (*view)(struct nv50_head *, struct nv50_head_atom *);
 	int (*mode)(struct nv50_head *, struct nv50_head_atom *);

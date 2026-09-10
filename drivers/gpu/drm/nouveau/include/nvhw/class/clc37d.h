@@ -564,4 +564,7 @@
 #define NVC37D_HEAD_SET_CRC_CONTROL_CRC_DURING_SNOOZE                           9:9
 #define NVC37D_HEAD_SET_CRC_CONTROL_CRC_DURING_SNOOZE_DISABLE                   (0x00000000)
 #define NVC37D_HEAD_SET_CRC_CONTROL_CRC_DURING_SNOOZE_ENABLE                    (0x00000001)
+#define NVC37D_HEAD_SET_MIN_FRAME_IDLE(a)                                       (0x00002218 + (a)*0x00000400)
+#define NVC37D_HEAD_SET_MIN_FRAME_IDLE_LEADING_RASTER_LINES                     14:0
+#define NVC37D_HEAD_SET_MIN_FRAME_IDLE_TRAILING_RASTER_LINES                    30:16
 #endif // _clC37d_h

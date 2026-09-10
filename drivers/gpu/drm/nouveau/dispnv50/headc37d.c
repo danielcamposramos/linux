@@ -255,9 +255,10 @@ headc37d_view(struct nv50_head *head, struct nv50_head_atom *asyh)
 {
 	struct nvif_push *push = &nv50_disp(head->base.base.dev)->core->chan.push;
 	const int i = head->base.index;
+	u16 leading, trailing;
 	int ret;
 
-	if ((ret = PUSH_WAIT(push, 4)))
+	if ((ret = PUSH_WAIT(push, 6)))
 		return ret;
 
 	PUSH_MTHD(push, NVC37D, HEAD_SET_VIEWPORT_SIZE_IN(i),
@@ -267,6 +268,16 @@ headc37d_view(struct nv50_head *head, struct nv50_head_atom *asyh)
 	PUSH_MTHD(push, NVC37D, HEAD_SET_VIEWPORT_SIZE_OUT(i),
 		  NVVAL(NVC37D, HEAD_SET_VIEWPORT_SIZE_OUT, WIDTH, asyh->view.oW) |
 		  NVVAL(NVC37D, HEAD_SET_VIEWPORT_SIZE_OUT, HEIGHT, asyh->view.oH));
+
+	/* Replace the previous mode's counts with RM's fallback. */
+	if (!nv50_head_min_frame_idle(asyh, &leading, &trailing)) {
+		leading = 2;
+		trailing = 1;
+	}
+
+	PUSH_MTHD(push, NVC37D, HEAD_SET_MIN_FRAME_IDLE(i),
+		  NVVAL(NVC37D, HEAD_SET_MIN_FRAME_IDLE, LEADING_RASTER_LINES, leading) |
+		  NVVAL(NVC37D, HEAD_SET_MIN_FRAME_IDLE, TRAILING_RASTER_LINES, trailing));
 	return 0;
 }
 

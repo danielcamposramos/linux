@@ -275,13 +275,14 @@ headca7d_mode(struct nv50_head *head, struct nv50_head_atom *asyh)
 static int
 headca7d_view(struct nv50_head *head, struct nv50_head_atom *asyh)
 {
+	u16 leading, trailing;
 	struct nvif_push *push = &head->disp->core->chan.push;
 	const int i = head->base.index;
 	const bool scale = asyh->view.iW != asyh->view.oW ||
 			   asyh->view.iH != asyh->view.oH;
 	int ret;
 
-	ret = PUSH_WAIT(push, 18);
+	ret = PUSH_WAIT(push, 20);
 	if (ret)
 		return ret;
 
@@ -333,6 +334,16 @@ headca7d_view(struct nv50_head *head, struct nv50_head_atom *asyh)
 	PUSH_MTHD(push, NVCA7D, HEAD_SET_ITP2RGB_CONTROL(i), scale ?
 		  NVDEF(NVCA7D, HEAD_SET_ITP2RGB_CONTROL, ENABLE_FVLUT, ENABLE) |
 		  NVDEF(NVCA7D, HEAD_SET_ITP2RGB_CONTROL, FVLUT_INTERPOLATE, ENABLE) : 0);
+
+	if (!nv50_head_min_frame_idle(asyh, &leading, &trailing)) {
+		/* Replace the previous mode's counts with RM's fallback. */
+		leading = 2;
+		trailing = 1;
+	}
+
+	PUSH_MTHD(push, NVCA7D, HEAD_SET_MIN_FRAME_IDLE(i),
+		  NVVAL(NVCA7D, HEAD_SET_MIN_FRAME_IDLE, LEADING_RASTER_LINES, leading) |
+		  NVVAL(NVCA7D, HEAD_SET_MIN_FRAME_IDLE, TRAILING_RASTER_LINES, trailing));
 	return 0;
 }
 

@@ -241,11 +241,12 @@ headc57d_mode(struct nv50_head *head, struct nv50_head_atom *asyh)
 static int
 headc57d_view(struct nv50_head *head, struct nv50_head_atom *asyh)
 {
+	u16 leading, trailing;
 	struct nvif_push *push = &nv50_disp(head->base.base.dev)->core->chan.push;
 	const int i = head->base.index;
 	int ret;
 
-	ret = PUSH_WAIT(push, 14);
+	ret = PUSH_WAIT(push, 16);
 	if (ret)
 		return ret;
 
@@ -286,6 +287,16 @@ headc57d_view(struct nv50_head *head, struct nv50_head_atom *asyh)
 		  (asyh->view.upscale_v ?
 		   NVDEF(NVC57D, HEAD_SET_HEAD_USAGE_BOUNDS, UPSCALING_ALLOWED, TRUE) :
 		   NVDEF(NVC57D, HEAD_SET_HEAD_USAGE_BOUNDS, UPSCALING_ALLOWED, FALSE)));
+
+	if (!nv50_head_min_frame_idle(asyh, &leading, &trailing)) {
+		/* Replace the previous mode's counts with RM's fallback. */
+		leading = 2;
+		trailing = 1;
+	}
+
+	PUSH_MTHD(push, NVC57D, HEAD_SET_MIN_FRAME_IDLE(i),
+		  NVVAL(NVC57D, HEAD_SET_MIN_FRAME_IDLE, LEADING_RASTER_LINES, leading) |
+		  NVVAL(NVC57D, HEAD_SET_MIN_FRAME_IDLE, TRAILING_RASTER_LINES, trailing));
 	return 0;
 }
 

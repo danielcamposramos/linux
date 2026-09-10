@@ -865,6 +865,9 @@
 #define NVCA7D_HEAD_SET_OUTPUT_SCALER_COEFF_VALUE(a)                            (0x00002214 + (a)*0x00000800)
 #define NVCA7D_HEAD_SET_OUTPUT_SCALER_COEFF_VALUE_DATA                          9:0
 #define NVCA7D_HEAD_SET_OUTPUT_SCALER_COEFF_VALUE_INDEX                         19:12
+#define NVCA7D_HEAD_SET_MIN_FRAME_IDLE(a)                                       (0x00002218 + (a)*0x00000800)
+#define NVCA7D_HEAD_SET_MIN_FRAME_IDLE_LEADING_RASTER_LINES                     14:0
+#define NVCA7D_HEAD_SET_MIN_FRAME_IDLE_TRAILING_RASTER_LINES                    30:16
 #define NVCA7D_HEAD_SET_OLUT_CONTROL(a)                                         (0x00002280 + (a)*0x00000800)
 #define NVCA7D_HEAD_SET_OLUT_CONTROL_INTERPOLATE                                0:0
 #define NVCA7D_HEAD_SET_OLUT_CONTROL_INTERPOLATE_DISABLE                        (0x00000000)
