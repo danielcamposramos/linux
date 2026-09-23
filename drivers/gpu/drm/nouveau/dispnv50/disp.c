@@ -1019,11 +1019,15 @@ nv50_hdmi_enable(struct drm_encoder *encoder, struct nouveau_crtc *nv_crtc,
 	tmds_clock = hw.crtc_clock * asyh->or.bpc / 8;
 
 	/* At 12 bpc, GCP SB1 carries CD=6 and a packing phase selected by the
-	 * parity of the back porch plus active width.
+	 * parity of the back porch plus active width. At 10 bpc it carries
+	 * CD=5 and the phase within the four-pixel group (HDMI 1.4b 6.5.3).
 	 */
 	if (asyh->or.bpc == 12)
 		gcp_sb1 = 0x06 | ((hw.crtc_htotal - hw.crtc_hsync_end +
 				   hw.crtc_hdisplay) & 1 ? 0x10 : 0x20);
+	else if (asyh->or.bpc == 10)
+		gcp_sb1 = 0x05 | (((hw.crtc_htotal - hw.crtc_hsync_end +
+				    hw.crtc_hdisplay) & 3) << 4);
 
 	max_ac_packet  = mode->htotal - mode->hdisplay;
 	max_ac_packet -= rekey;
