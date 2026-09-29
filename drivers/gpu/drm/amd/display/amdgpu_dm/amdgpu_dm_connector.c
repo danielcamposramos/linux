@@ -1397,9 +1397,8 @@ void amdgpu_dm_update_stream_scaling_settings(struct drm_device *dev,
 	if (!mode)
 		return;
 
-	/* Full screen scaling by default */
-	src.width = mode->hdisplay;
-	src.height = mode->vdisplay;
+	/* Include the second eye in frame-packing scanout geometry. */
+	drm_mode_get_hv_timing(mode, &src.width, &src.height);
 	dst.width = stream->timing.h_addressable;
 	dst.height = stream->timing.v_addressable;
 
@@ -1546,6 +1545,17 @@ create_stream_for_sink(struct drm_connector *connector,
 
 			preferred_refresh = drm_mode_vrefresh(preferred_mode);
 		}
+	}
+
+	/*
+	 * DRM frame-packing modes describe one eye. Userspace presents both
+	 * eyes in one buffer, so DC must see the expanded link timing too.
+	 */
+	if (mode.flags & DRM_MODE_FLAG_3D_FRAME_PACKING) {
+		drm_mode_set_crtcinfo(&mode, CRTC_STEREO_DOUBLE);
+		drm_dbg_kms(dev, "expanded HDMI frame-packing timing to %dx%d total %dx%d clock %d kHz\n",
+			    mode.crtc_hdisplay, mode.crtc_vdisplay,
+			    mode.crtc_htotal, mode.crtc_vtotal, mode.crtc_clock);
 	}
 
 	if (recalculate_timing)
