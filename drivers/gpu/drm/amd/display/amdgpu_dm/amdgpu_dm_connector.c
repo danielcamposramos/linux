@@ -920,6 +920,28 @@ STATIC_IFN_KUNIT void fill_stream_properties_from_drm_display_mode(
 			drm_warn_once(connector->dev, "Failed to setup vendor infoframe on connector %s: %zd\n",
 				      connector->name, err);
 		timing_out->hdmi_vic = hv_frame.vic;
+
+		/* when the mode carries 3D flags, pack and
+		 * attach the vendor-specific infoframe so a 3D-capable sink
+		 * can switch itself on. Buffer content is composed by
+		 * userspace; timing_3d_format stays NONE on purpose because
+		 * it drives DC's stereo plane-address flip, not the link.
+		 */
+		if (mode_in->flags & DRM_MODE_FLAG_3D_MASK) {
+			u8 vsif_raw[32] = { 0 };
+			ssize_t vsif_len;
+
+			vsif_len = hdmi_vendor_infoframe_pack(&hv_frame, vsif_raw,
+							      sizeof(vsif_raw));
+			if (vsif_len >= (ssize_t)(4 + hv_frame.length)) {
+				stream->hfvsif_infopacket.hb0 = vsif_raw[0];
+				stream->hfvsif_infopacket.hb1 = vsif_raw[1];
+				stream->hfvsif_infopacket.hb2 = vsif_raw[2];
+				memcpy(&stream->hfvsif_infopacket.sb[0],
+				       &vsif_raw[3], 1 + hv_frame.length);
+				stream->hfvsif_infopacket.valid = true;
+			}
+		}
 	}
 
 	if (aconnector && amdgpu_dm_is_freesync_video_mode(mode_in, aconnector)) {
@@ -3188,7 +3210,7 @@ void amdgpu_dm_connector_init_helper(struct amdgpu_display_manager *dm,
 	aconnector->dc_link = link;
 	aconnector->base.interlace_allowed = false;
 	aconnector->base.doublescan_allowed = false;
-	aconnector->base.stereo_allowed = false;
+	aconnector->base.stereo_allowed = true;
 	aconnector->base.dpms = DRM_MODE_DPMS_OFF;
 	aconnector->hpd.hpd = AMDGPU_HPD_NONE; /* not used */
 	aconnector->audio_inst = -1;
