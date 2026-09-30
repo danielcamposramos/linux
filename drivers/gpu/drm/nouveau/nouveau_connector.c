@@ -326,6 +326,16 @@ nouveau_conn_attach_properties(struct drm_connector *connector)
 			drm_connector_attach_max_bpc_property(connector, 8, 16);
 	}
 
+	/* Output range and content type, sent in HDMI's AVI InfoFrame; the heads
+	 * compress to limited range from Turing on.
+	 */
+	if (drm_drv_uses_atomic_modeset(dev) &&
+	    connector->connector_type == DRM_MODE_CONNECTOR_HDMIA) {
+		if (disp->disp.object.oclass >= TU102_DISP)
+			drm_connector_attach_broadcast_rgb_property(connector);
+		drm_connector_attach_content_type_property(connector);
+	}
+
 	/* Add hue and saturation options. */
 	if (disp->vibrant_hue_property)
 		drm_object_attach_property(&connector->base,
@@ -1274,6 +1284,16 @@ nouveau_connector_atomic_check(struct drm_connector *connector, struct drm_atomi
 	     armc->scaler.underscan.mode != asyc->scaler.underscan.mode ||
 	     armc->scaler.underscan.hborder != asyc->scaler.underscan.hborder ||
 	     armc->scaler.underscan.vborder != asyc->scaler.underscan.vborder)) {
+		crtc_state = drm_atomic_get_crtc_state(state, conn_state->crtc);
+		if (IS_ERR(crtc_state))
+			return PTR_ERR(crtc_state);
+		crtc_state->connectors_changed = true;
+	}
+
+	/* The output range and content type go out with the modeset (AVI InfoFrame). */
+	if (conn_state->crtc &&
+	    (armc->state.hdmi.broadcast_rgb != asyc->state.hdmi.broadcast_rgb ||
+	     armc->state.content_type != asyc->state.content_type)) {
 		crtc_state = drm_atomic_get_crtc_state(state, conn_state->crtc);
 		if (IS_ERR(crtc_state))
 			return PTR_ERR(crtc_state);

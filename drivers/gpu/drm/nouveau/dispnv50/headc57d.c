@@ -74,21 +74,48 @@ headc57d_or(struct nv50_head *head, struct nv50_head_atom *asyh)
 	return 0;
 }
 
+/* RGB compressed to 16-235 (S3.16), as OpenRM's RGBToLimitedRangeRGB */
+static const u32
+headc57d_limited_rgb[12] = {
+	0xdb04, 0x0000, 0x0000, 0x1000,
+	0x0000, 0xdb04, 0x0000, 0x1000,
+	0x0000, 0x0000, 0xdb04, 0x1000,
+};
+
 static int
 headc57d_procamp(struct nv50_head *head, struct nv50_head_atom *asyh)
 {
 	struct nvif_push *push = &nv50_disp(head->base.base.dev)->core->chan.push;
 	const int i = head->base.index;
+	const bool limited = asyh->procamp.limited;
 	int ret;
 
-	if ((ret = PUSH_WAIT(push, 2)))
+	ret = PUSH_WAIT(push, 20);
+	if (ret)
 		return ret;
 
-	//TODO:
+	/* "Broadcast RGB" Limited: CEA range, with OCSC1 compressing RGB to 16-235 and
+	 * the output clamped to it, as OpenRM programs it.
+	 */
 	PUSH_MTHD(push, NVC57D, HEAD_SET_PROCAMP(i),
 		  NVDEF(NVC57D, HEAD_SET_PROCAMP, COLOR_SPACE, RGB) |
 		  NVDEF(NVC57D, HEAD_SET_PROCAMP, CHROMA_LPF, DISABLE) |
-		  NVDEF(NVC57D, HEAD_SET_PROCAMP, DYNAMIC_RANGE, VESA));
+		  (limited ? NVDEF(NVC57D, HEAD_SET_PROCAMP, DYNAMIC_RANGE, CEA) :
+			     NVDEF(NVC57D, HEAD_SET_PROCAMP, DYNAMIC_RANGE, VESA)));
+
+	PUSH_MTHD(push, NVC57D, HEAD_SET_CLAMP_RANGE_GREEN(i),
+		  NVVAL(NVC57D, HEAD_SET_CLAMP_RANGE_GREEN, LOW, limited ? 0x100 : 0x000) |
+		  NVVAL(NVC57D, HEAD_SET_CLAMP_RANGE_GREEN, HIGH, limited ? 0xeb0 : 0xfff),
+
+				HEAD_SET_CLAMP_RANGE_RED_BLUE(i),
+		  NVVAL(NVC57D, HEAD_SET_CLAMP_RANGE_RED_BLUE, LOW, limited ? 0x100 : 0x000) |
+		  NVVAL(NVC57D, HEAD_SET_CLAMP_RANGE_RED_BLUE, HIGH, limited ? 0xeb0 : 0xfff));
+
+	PUSH_MTHD(push, NVC57D, HEAD_SET_OCSC1CONTROL(i),
+		  limited ? NVDEF(NVC57D, HEAD_SET_OCSC1CONTROL, ENABLE, ENABLE) :
+			    NVDEF(NVC57D, HEAD_SET_OCSC1CONTROL, ENABLE, DISABLE));
+	if (limited)
+		PUSH_MTHD(push, NVC57D, HEAD_SET_OCSC1COEFFICIENT_C00(i), headc57d_limited_rgb, 12);
 	return 0;
 }
 

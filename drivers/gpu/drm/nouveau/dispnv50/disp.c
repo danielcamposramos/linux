@@ -39,6 +39,7 @@
 #include <linux/math64.h>
 
 #include <drm/display/drm_dp_helper.h>
+#include <drm/display/drm_hdmi_helper.h>
 #include <drm/display/drm_scdc_helper.h>
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
@@ -1067,8 +1068,16 @@ nv50_hdmi_enable(struct drm_encoder *encoder, struct nouveau_crtc *nv_crtc,
 	args->head = nv_crtc->index;
 
 	if (!drm_hdmi_avi_infoframe_from_display_mode(&infoframe.avi, &nv_connector->base, mode)) {
+		const struct drm_connector_state *conn_state =
+			drm_atomic_get_new_connector_state(state, &nv_connector->base);
+
+		/* the range the head sends ("Broadcast RGB") */
 		drm_hdmi_avi_infoframe_quant_range(&infoframe.avi, &nv_connector->base, mode,
+						   asyh->procamp.limited ?
+						   HDMI_QUANTIZATION_RANGE_LIMITED :
 						   HDMI_QUANTIZATION_RANGE_FULL);
+		if (conn_state)
+			drm_hdmi_avi_infoframe_content_type(&infoframe.avi, conn_state);
 
 		size = hdmi_infoframe_pack(&infoframe, args->data, data_len);
 	} else {

@@ -908,4 +908,38 @@
 #define NVCA7D_TILE_SET_TILE_SIZE_START                                         14:0
 #define NVCA7D_TILE_SET_TILE_SIZE_WIDTH                                         30:16
 
+#define NVCA7D_HEAD_SET_CLAMP_RANGE_GREEN(a)                                    (0x00002238 + (a)*0x00000800)
+#define NVCA7D_HEAD_SET_CLAMP_RANGE_GREEN_LOW                                   11:0
+#define NVCA7D_HEAD_SET_CLAMP_RANGE_GREEN_HIGH                                  27:16
+#define NVCA7D_HEAD_SET_CLAMP_RANGE_RED_BLUE(a)                                 (0x0000223C + (a)*0x00000800)
+#define NVCA7D_HEAD_SET_CLAMP_RANGE_RED_BLUE_LOW                                11:0
+#define NVCA7D_HEAD_SET_CLAMP_RANGE_RED_BLUE_HIGH                               27:16
+#define NVCA7D_HEAD_SET_OCSC1CONTROL(a)                                         (0x0000229C + (a)*0x00000800)
+#define NVCA7D_HEAD_SET_OCSC1CONTROL_ENABLE                                     0:0
+#define NVCA7D_HEAD_SET_OCSC1CONTROL_ENABLE_DISABLE                             (0x00000000)
+#define NVCA7D_HEAD_SET_OCSC1CONTROL_ENABLE_ENABLE                              (0x00000001)
+#define NVCA7D_HEAD_SET_OCSC1COEFFICIENT_C00(a)                                 (0x000022A0 + (a)*0x00000800)
+#define NVCA7D_HEAD_SET_OCSC1COEFFICIENT_C00_VALUE                              20:0
+#define NVCA7D_HEAD_SET_OCSC1COEFFICIENT_C01(a)                                 (0x000022A4 + (a)*0x00000800)
+#define NVCA7D_HEAD_SET_OCSC1COEFFICIENT_C01_VALUE                              20:0
+#define NVCA7D_HEAD_SET_OCSC1COEFFICIENT_C02(a)                                 (0x000022A8 + (a)*0x00000800)
+#define NVCA7D_HEAD_SET_OCSC1COEFFICIENT_C02_VALUE                              20:0
+#define NVCA7D_HEAD_SET_OCSC1COEFFICIENT_C03(a)                                 (0x000022AC + (a)*0x00000800)
+#define NVCA7D_HEAD_SET_OCSC1COEFFICIENT_C03_VALUE                              20:0
+#define NVCA7D_HEAD_SET_OCSC1COEFFICIENT_C10(a)                                 (0x000022B0 + (a)*0x00000800)
+#define NVCA7D_HEAD_SET_OCSC1COEFFICIENT_C10_VALUE                              20:0
+#define NVCA7D_HEAD_SET_OCSC1COEFFICIENT_C11(a)                                 (0x000022B4 + (a)*0x00000800)
+#define NVCA7D_HEAD_SET_OCSC1COEFFICIENT_C11_VALUE                              20:0
+#define NVCA7D_HEAD_SET_OCSC1COEFFICIENT_C12(a)                                 (0x000022B8 + (a)*0x00000800)
+#define NVCA7D_HEAD_SET_OCSC1COEFFICIENT_C12_VALUE                              20:0
+#define NVCA7D_HEAD_SET_OCSC1COEFFICIENT_C13(a)                                 (0x000022BC + (a)*0x00000800)
+#define NVCA7D_HEAD_SET_OCSC1COEFFICIENT_C13_VALUE                              20:0
+#define NVCA7D_HEAD_SET_OCSC1COEFFICIENT_C20(a)                                 (0x000022C0 + (a)*0x00000800)
+#define NVCA7D_HEAD_SET_OCSC1COEFFICIENT_C20_VALUE                              20:0
+#define NVCA7D_HEAD_SET_OCSC1COEFFICIENT_C21(a)                                 (0x000022C4 + (a)*0x00000800)
+#define NVCA7D_HEAD_SET_OCSC1COEFFICIENT_C21_VALUE                              20:0
+#define NVCA7D_HEAD_SET_OCSC1COEFFICIENT_C22(a)                                 (0x000022C8 + (a)*0x00000800)
+#define NVCA7D_HEAD_SET_OCSC1COEFFICIENT_C22_VALUE                              20:0
+#define NVCA7D_HEAD_SET_OCSC1COEFFICIENT_C23(a)                                 (0x000022CC + (a)*0x00000800)
+#define NVCA7D_HEAD_SET_OCSC1COEFFICIENT_C23_VALUE                              20:0
 #endif // _clca7d_h

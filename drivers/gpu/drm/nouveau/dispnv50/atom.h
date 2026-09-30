@@ -121,6 +121,7 @@ struct nv50_head_atom {
 			u16 cos:12;
 			u16 sin:12;
 		} sat;
+		bool limited; /* "Broadcast RGB" Limited: 16-235 on the wire */
 	} procamp;
 
 	struct {

@@ -90,6 +90,17 @@ nv50_head_flush_set(struct nv50_head *head, struct nv50_head_atom *asyh)
 }
 
 static void
+nv50_head_atomic_check_range(struct nv50_head_atom *armh,
+			     struct nv50_head_atom *asyh,
+			     struct nouveau_conn_atom *asyc)
+{
+	asyh->procamp.limited = asyc->state.connector->broadcast_rgb_property &&
+		asyc->state.hdmi.broadcast_rgb == DRM_HDMI_BROADCAST_RGB_LIMITED;
+	if (asyh->procamp.limited != armh->procamp.limited)
+		asyh->set.procamp = true;
+}
+
+static void
 nv50_head_atomic_check_procamp(struct nv50_head_atom *armh,
 			       struct nv50_head_atom *asyh,
 			       struct nouveau_conn_atom *asyc)
@@ -489,6 +500,7 @@ nv50_head_atomic_check(struct drm_crtc *crtc, struct drm_atomic_commit *state)
 				nv50_head_atomic_check_dither(armh, asyh, asyc);
 			if (asyc->set.procamp)
 				nv50_head_atomic_check_procamp(armh, asyh, asyc);
+			nv50_head_atomic_check_range(armh, asyh, asyc);
 		}
 
 		if (head->func->core_calc) {
