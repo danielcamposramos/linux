@@ -156,7 +156,7 @@ nv50_head_atomic_check_view(struct nv50_head_atom *armh,
 	struct drm_display_mode *omode = &asyh->state.adjusted_mode;
 	struct drm_display_mode *umode = &asyh->state.mode;
 	int mode = asyc->scaler.mode;
-	int umode_vdisplay, omode_hdisplay, omode_vdisplay;
+	int umode_hdisplay, umode_vdisplay, omode_hdisplay, omode_vdisplay;
 
 	if (!asyc->scaler.full) {
 		if (mode == DRM_MODE_SCALE_NONE)
@@ -167,12 +167,11 @@ nv50_head_atomic_check_view(struct nv50_head_atom *armh,
 	}
 
 	/* For the user-specified mode, we must ignore doublescan and
-	 * the like, but honor frame packing.
+	 * the like, but honor stereo layouts holding both eyes (frame
+	 * packing, side by side full).
 	 */
-	umode_vdisplay = umode->vdisplay;
-	if ((umode->flags & DRM_MODE_FLAG_3D_MASK) == DRM_MODE_FLAG_3D_FRAME_PACKING)
-		umode_vdisplay += umode->vtotal;
-	asyh->view.iW = umode->hdisplay;
+	drm_mode_get_hv_timing(umode, &umode_hdisplay, &umode_vdisplay);
+	asyh->view.iW = umode_hdisplay;
 	asyh->view.iH = umode_vdisplay;
 	/* For the output mode, we can just use the stock helper. */
 	drm_mode_get_hv_timing(omode, &omode_hdisplay, &omode_vdisplay);

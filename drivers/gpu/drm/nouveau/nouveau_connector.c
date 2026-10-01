@@ -1191,10 +1191,13 @@ nouveau_connector_mode_valid(struct drm_connector *connector,
 	 */
 	if (nouveau_display(connector->dev)->scaler_limits) {
 		const u16 max = nouveau_display(connector->dev)->max_viewport;
+		int hdisplay, vdisplay;
 
-		if (mode->hdisplay > max)
+		/* the viewport holds both eyes of a stereo layout */
+		drm_mode_get_hv_timing(mode, &hdisplay, &vdisplay);
+		if (hdisplay > max)
 			return MODE_BAD_HVALUE;
-		if (mode->vdisplay > max)
+		if (vdisplay > max)
 			return MODE_BAD_VVALUE;
 	}
 
@@ -1235,8 +1238,8 @@ nouveau_connector_mode_valid(struct drm_connector *connector,
 		return MODE_BAD;
 	}
 
-	if ((mode->flags & DRM_MODE_FLAG_3D_MASK) == DRM_MODE_FLAG_3D_FRAME_PACKING)
-		clock *= 2;
+	/* stereo layouts holding both eyes in one frame need a faster clock */
+	clock = drm_mode_stereo_clock(mode);
 
 	if (clock < min_clock)
 		return MODE_CLOCK_LOW;

@@ -2083,8 +2083,8 @@ intel_hdmi_mode_valid(struct drm_connector *_connector,
 	if (status != MODE_OK)
 		return status;
 
-	if ((mode->flags & DRM_MODE_FLAG_3D_MASK) == DRM_MODE_FLAG_3D_FRAME_PACKING)
-		clock *= 2;
+	/* stereo layouts holding both eyes in one frame need a faster clock */
+	clock = drm_mode_stereo_clock(mode);
 
 	if (clock > max_dotclk)
 		return MODE_CLOCK_HIGH;

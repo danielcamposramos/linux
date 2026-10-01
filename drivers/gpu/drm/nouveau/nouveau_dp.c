@@ -552,8 +552,8 @@ nv50_dp_mode_valid(struct nouveau_encoder *outp,
 	if (mode->flags & DRM_MODE_FLAG_INTERLACE && !outp->caps.dp_interlace)
 		return MODE_NO_INTERLACE;
 
-	if ((mode->flags & DRM_MODE_FLAG_3D_MASK) == DRM_MODE_FLAG_3D_FRAME_PACKING)
-		clock *= 2;
+	/* stereo layouts holding both eyes in one frame need a faster clock */
+	clock = drm_mode_stereo_clock(mode);
 
 	max_rate = outp->dp.link_nr * outp->dp.link_bw;
 	mode_rate = DIV_ROUND_UP(clock * bpp, 8);

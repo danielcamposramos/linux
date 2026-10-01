@@ -1548,12 +1548,14 @@ create_stream_for_sink(struct drm_connector *connector,
 	}
 
 	/*
-	 * DRM frame-packing modes describe one eye. Userspace presents both
-	 * eyes in one buffer, so DC must see the expanded link timing too.
+	 * DRM frame packing and side by side (full) modes describe one eye.
+	 * Userspace presents both eyes in one buffer, so DC must see the
+	 * expanded link timing too.
 	 */
-	if (mode.flags & DRM_MODE_FLAG_3D_FRAME_PACKING) {
+	if ((mode.flags & DRM_MODE_FLAG_3D_MASK) == DRM_MODE_FLAG_3D_FRAME_PACKING ||
+	    (mode.flags & DRM_MODE_FLAG_3D_MASK) == DRM_MODE_FLAG_3D_SIDE_BY_SIDE_FULL) {
 		drm_mode_set_crtcinfo(&mode, CRTC_STEREO_DOUBLE);
-		drm_dbg_kms(dev, "expanded HDMI frame-packing timing to %dx%d total %dx%d clock %d kHz\n",
+		drm_dbg_kms(dev, "expanded HDMI stereo timing to %dx%d total %dx%d clock %d kHz\n",
 			    mode.crtc_hdisplay, mode.crtc_vdisplay,
 			    mode.crtc_htotal, mode.crtc_vtotal, mode.crtc_clock);
 	}
