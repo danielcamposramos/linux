@@ -1314,8 +1314,9 @@ EXPORT_SYMBOL(drm_mode_vrefresh);
  * @hdisplay: hdisplay value to fill in
  * @vdisplay: vdisplay value to fill in
  *
- * The vdisplay value will be doubled if the specified mode is a stereo mode of
- * the appropriate layout.
+ * The vdisplay value will be doubled for a frame packing stereo mode, and the
+ * hdisplay value for a side by side (full) stereo mode: the size of a buffer
+ * holding both eyes.
  */
 void drm_mode_get_hv_timing(const struct drm_display_mode *mode,
 			    int *hdisplay, int *vdisplay)
@@ -1399,6 +1400,20 @@ void drm_mode_set_crtcinfo(struct drm_display_mode *p, int adjust_flags)
 			p->crtc_vsync_end += p->crtc_vtotal;
 			p->crtc_vtotal += p->crtc_vtotal;
 			break;
+		case DRM_MODE_FLAG_3D_SIDE_BY_SIDE_FULL:
+			/*
+			 * Both eyes at full width: the active width doubles, the
+			 * horizontal blanking is kept, and the pixel clock grows
+			 * with the total width so the refresh rate is unchanged.
+			 */
+			p->crtc_clock = DIV_ROUND_CLOSEST_ULL(mul_u32_u32(p->crtc_clock,
+									  p->crtc_htotal + p->crtc_hdisplay),
+							      p->crtc_htotal);
+			p->crtc_hsync_start += p->crtc_hdisplay;
+			p->crtc_hsync_end += p->crtc_hdisplay;
+			p->crtc_htotal += p->crtc_hdisplay;
+			p->crtc_hdisplay += p->crtc_hdisplay;
+			break;
 		}
 	}
 
@@ -1408,6 +1423,28 @@ void drm_mode_set_crtcinfo(struct drm_display_mode *p, int adjust_flags)
 	p->crtc_hblank_end = max(p->crtc_hsync_end, p->crtc_htotal);
 }
 EXPORT_SYMBOL(drm_mode_set_crtcinfo);
+
+/**
+ * drm_mode_stereo_clock - pixel clock a mode is sent at
+ * @mode: mode to query
+ *
+ * The pixel clock in kHz of @mode as it goes out on the link, with its stereo
+ * layout: doubled for frame packing, grown with the doubled active width for
+ * side by side (full), unchanged for the other layouts and for 2D modes.
+ * Drivers use it to check a stereo mode against their clock limits.
+ */
+int drm_mode_stereo_clock(const struct drm_display_mode *mode)
+{
+	struct drm_display_mode adjusted;
+
+	if (!(mode->flags & DRM_MODE_FLAG_3D_MASK))
+		return mode->clock;
+
+	drm_mode_init(&adjusted, mode);
+	drm_mode_set_crtcinfo(&adjusted, CRTC_STEREO_DOUBLE_ONLY);
+	return adjusted.crtc_clock;
+}
+EXPORT_SYMBOL(drm_mode_stereo_clock);
 
 /**
  * drm_mode_copy - copy the mode

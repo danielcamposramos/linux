@@ -533,6 +533,7 @@ int drm_mode_vrefresh(const struct drm_display_mode *mode);
 void drm_mode_get_hv_timing(const struct drm_display_mode *mode,
 			    int *hdisplay, int *vdisplay);
 
+int drm_mode_stereo_clock(const struct drm_display_mode *mode);
 void drm_mode_set_crtcinfo(struct drm_display_mode *p,
 			   int adjust_flags);
 void drm_mode_copy(struct drm_display_mode *dst,

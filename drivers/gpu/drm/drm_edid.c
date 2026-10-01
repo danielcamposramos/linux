@@ -4827,6 +4827,14 @@ static int add_3d_struct_modes(struct drm_connector *connector, u16 structure,
 			modes++;
 		}
 	}
+	if (structure & (1 << 3)) {
+		newmode = drm_display_mode_from_vic_index(connector, vic_index);
+		if (newmode) {
+			newmode->flags |= DRM_MODE_FLAG_3D_SIDE_BY_SIDE_FULL;
+			drm_mode_probed_add(connector, newmode);
+			modes++;
+		}
+	}
 	if (structure & (1 << 6)) {
 		newmode = drm_display_mode_from_vic_index(connector, vic_index);
 		if (newmode) {
@@ -4969,6 +4977,9 @@ do_hdmi_vsdb_modes(struct drm_connector *connector, const u8 *db, u8 len)
 		switch (db[8 + offset + i] & 0x0f) {
 		case 0:
 			newflag = DRM_MODE_FLAG_3D_FRAME_PACKING;
+			break;
+		case 3:
+			newflag = DRM_MODE_FLAG_3D_SIDE_BY_SIDE_FULL;
 			break;
 		case 6:
 			newflag = DRM_MODE_FLAG_3D_TOP_AND_BOTTOM;
