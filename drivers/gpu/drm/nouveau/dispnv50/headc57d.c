@@ -50,6 +50,7 @@ headc57d_or(struct nv50_head *head, struct nv50_head_atom *asyh)
 
 	/* The head uses different pixel depth encodings from the SOR. */
 	switch (asyh->or.depth) {
+	case 9: depth = 8; break;
 	case 8: depth = 7; break;
 	case 6: depth = 5; break;
 	case 5: depth = 4; break;

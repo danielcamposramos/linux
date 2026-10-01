@@ -423,7 +423,8 @@ nv50_hdmi_hw_mode(const struct drm_display_mode *mode,
 }
 
 /* Choose the highest depth up to bpc supported by both ends. Enable
- * 12 bpc on Turing+ and 10 bpc on Ampere+. DVI remains at 8 bpc.
+ * 16 and 12 bpc on Turing+ and 10 bpc on Ampere+. DVI remains at 8 bpc.
+ * 16 bpc (48 bpp, HDMI DC_48) is untested: no 48-bit sink at hand.
  */
 static u8
 nv50_hdmi_fix_bpc(struct nv50_disp *disp, const struct drm_display_info *info,
@@ -433,6 +434,9 @@ nv50_hdmi_fix_bpc(struct nv50_disp *disp, const struct drm_display_info *info,
 
 	if (!info->is_hdmi)
 		return 8;
+	if (bpc >= 16 && oclass >= TU102_DISP &&
+	    (info->edid_hdmi_rgb444_dc_modes & DRM_EDID_HDMI_DC_48))
+		return 16;
 	if (bpc >= 12 && oclass >= TU102_DISP &&
 	    (info->edid_hdmi_rgb444_dc_modes & DRM_EDID_HDMI_DC_36))
 		return 12;
@@ -1023,7 +1027,12 @@ nv50_hdmi_enable(struct drm_encoder *encoder, struct nouveau_crtc *nv_crtc,
 	 * parity of the back porch plus active width. At 10 bpc it carries
 	 * CD=5 and the phase within the four-pixel group (HDMI 1.4b 6.5.3).
 	 */
-	if (asyh->or.bpc == 12)
+	/* At 16 bpc, CD=7; a 48-bpp group holds one pixel, so the packing
+	 * phase stays 0.
+	 */
+	if (asyh->or.bpc == 16)
+		gcp_sb1 = 0x07;
+	else if (asyh->or.bpc == 12)
 		gcp_sb1 = 0x06 | ((hw.crtc_htotal - hw.crtc_hsync_end +
 				   hw.crtc_hdisplay) & 1 ? 0x10 : 0x20);
 	else if (asyh->or.bpc == 10)
@@ -1273,6 +1282,8 @@ nv50_dp_bpc_to_depth(unsigned int bpc)
 	case  6: return NV837D_SOR_SET_CONTROL_PIXEL_DEPTH_BPP_18_444;
 	case  8: return NV837D_SOR_SET_CONTROL_PIXEL_DEPTH_BPP_24_444;
 	case 12: return NV837D_SOR_SET_CONTROL_PIXEL_DEPTH_BPP_36_444;
+	/* 837d's class header predates 48 bpp; the SOR encoding is shared */
+	case 16: return NV887D_SOR_SET_CONTROL_PIXEL_DEPTH_BPP_48_444;
 	case 10:
 	default: return NV837D_SOR_SET_CONTROL_PIXEL_DEPTH_BPP_30_444;
 	}
