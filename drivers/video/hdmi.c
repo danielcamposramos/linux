@@ -551,8 +551,14 @@ EXPORT_SYMBOL(hdmi_vendor_infoframe_init);
 
 static int hdmi_vendor_infoframe_length(const struct hdmi_vendor_infoframe *frame)
 {
-	/* for side by side (half) we also need to provide 3D_Ext_Data */
-	if (frame->s3d_struct >= HDMI_3D_STRUCTURE_SIDE_BY_SIDE_HALF)
+	/*
+	 * Side by side (half) carries 3D_Ext_Data. Top and bottom carries it
+	 * too, as zero: sinks that only engage 3D on a 6-byte body exist (a Sony
+	 * KDL-46HX855; JVC projectors), and a 6-byte body is valid for any 3D
+	 * structure.
+	 */
+	if (frame->s3d_struct >= HDMI_3D_STRUCTURE_SIDE_BY_SIDE_HALF ||
+	    frame->s3d_struct == HDMI_3D_STRUCTURE_TOP_AND_BOTTOM)
 		return 6;
 	else if (frame->vic != 0 || frame->s3d_struct != HDMI_3D_STRUCTURE_INVALID)
 		return 5;
