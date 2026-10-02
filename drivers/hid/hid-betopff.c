@@ -65,10 +65,15 @@ static int betop_input_configured(struct hid_device *hid, struct hid_input *hidi
 	if (!list_is_first(&hidinput->list, &hid->inputs))
 		return 0;
 
+	/*
+	 * Force feedback is optional: a pad without a usable output report keeps
+	 * its input device and goes without rumble, as before the move to
+	 * .input_configured(), where an error would drop the input device.
+	 */
 	report = list_first_entry_or_null(report_list, struct hid_report, list);
 	if (!report) {
-		hid_err(hid, "no output reports found\n");
-		return -ENODEV;
+		hid_info(hid, "no output reports found, no force feedback\n");
+		return 0;
 	}
 	/*
 	 * Actually there are 4 fields for 4 Bytes as below:
@@ -79,14 +84,14 @@ static int betop_input_configured(struct hid_device *hid, struct hid_input *hidi
 	 * Do init them with default value.
 	 */
 	if (report->maxfield < 4) {
-		hid_err(hid, "not enough fields in the report: %d\n",
+		hid_info(hid, "not enough fields in the report: %d, no force feedback\n",
 				report->maxfield);
-		return -ENODEV;
+		return 0;
 	}
 	for (i = 0; i < report->maxfield; i++) {
 		if (report->field[i]->report_count < 1) {
-			hid_err(hid, "no values in the field\n");
-			return -ENODEV;
+			hid_info(hid, "no values in the field, no force feedback\n");
+			return 0;
 		}
 		for (j = 0; j < report->field[i]->report_count; j++) {
 			report->field[i]->value[j] = 0x00;
