@@ -1,3 +1,28 @@
+Sparky Stereo OS
+----------------
+
+This is the stereo version of the Linux® kernel by Sparky Stereo OS, forked from
+torvalds/linux (https://github.com/torvalds/linux). It is the distribution's
+kernel: HDMI 1.4a 3D modes and HDMI deep colour in the display drivers, and
+fixes the distribution carries until they are merged.
+
+Where it comes from:
+
+* The Linux kernel (https://kernel.org) was started by Linus Torvalds and is
+  developed by its community; see CREDITS and MAINTAINERS.
+* Debian (https://www.debian.org/) is the base of the system.
+* SparkyLinux (https://sparkylinux.org/), by Paweł "pavroo" Pijanowski, builds
+  on Debian.
+* Sparky Stereo OS (https://github.com/Sparky-OS/sparky-stereo-os) is the stereo
+  3D edition of SparkyLinux: SparkyOS, powered by Debian.
+
+The stereo3d branch holds the version the distribution builds. The licence is
+unchanged; see COPYING. Linux® is the registered trademark of Linus Torvalds in
+the U.S. and other countries.
+
+Sparky Stereo OS, Daniel Ramos's edition of SparkyLinux (by Paweł "pavroo" Pijanowski).
+
+
 Linux kernel
 ============
 
