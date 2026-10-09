@@ -20,6 +20,41 @@ The stereo3d branch holds the version the distribution builds. The licence is
 unchanged; see COPYING. Linux® is the registered trademark of Linus Torvalds in
 the U.S. and other countries.
 
+How its nouveau differs
+-----------------------
+
+The nouveau in this tree is nouveau as its developers ship it, together with
+work on its way upstream, each change with its authors' credit:
+
+* Mohamed Ahmed's display series: armed head state readback, output scaling,
+  GB20x tile and phywin ownership, IMP mode validation and usage bounds
+  through GSP, the Turing memory clock scanout workaround, the max bpc
+  property, HDMI deep colour, and the link and bpc debugfs files.
+* The NULL pointer fixes by Jim Cromie and Zhenhao Wan.
+
+It differs from nouveau in one thing: it makes the driver respect the HDMI 3D
+specification and the signal properties 3D depends on. Each change cites the
+section it follows:
+
+* drm: list and time HDMI 3D side by side (full). HDMI 1.4b, the HDMI
+  Vendor-Specific Data Block's 3D_Structure_ALL bit 3 and 3D_Structure value
+  3; both eyes at full width, blanking kept, the refresh rate unchanged, as
+  NVIDIA's open timing library derives it. Compile-tested.
+* nouveau, i915 and amdgpu: side by side (full) handled like frame packing in
+  mode checks and in the head's input viewport. Compile-tested.
+* nouveau: "Broadcast RGB" and content type on HDMI from Turing on. CTA-861,
+  the AVI InfoFrame's quantization range and content type; limited range
+  16-235 programmed as NVIDIA's open driver does. Compile-tested.
+* nouveau: CD=5 in the General Control Packet at 10 bits per colour. HDMI 1.4b
+  section 6.5.3. Tested on an RTX 3060 with two Sony 3D televisions.
+* nouveau: 16 bits per colour (DC_48) on Turing and newer. HDMI deep colour,
+  the General Control Packet's colour depth CD=7. Untested: no 48-bit display
+  at hand.
+
+Some of these are not 3D themselves: they came from making 3D modes work, and
+they serve the same purpose, a driver that respects the specifications its 3D
+modes depend on.
+
 Sparky Stereo OS, Daniel Ramos's edition of SparkyLinux (by Paweł "pavroo" Pijanowski).
 
 
