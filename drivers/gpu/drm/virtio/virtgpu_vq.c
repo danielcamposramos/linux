@@ -32,7 +32,9 @@
 #include <linux/virtio_ring.h>
 
 #include <drm/drm_edid.h>
+#include <drm/drm_modes.h>
 #include <drm/drm_print.h>
+#include <drm/drm_rect.h>
 
 #include "virtgpu_drv.h"
 #include "virtgpu_trace.h"
@@ -52,6 +54,15 @@ static void convert_to_hw_box(struct virtio_gpu_box *dst,
 	dst->w = cpu_to_le32(src->w);
 	dst->h = cpu_to_le32(src->h);
 	dst->d = cpu_to_le32(src->d);
+}
+
+static void convert_to_hw_rect(struct virtio_gpu_rect *dst,
+			       const struct drm_rect *src)
+{
+	dst->x = cpu_to_le32(src->x1);
+	dst->y = cpu_to_le32(src->y1);
+	dst->width = cpu_to_le32(drm_rect_width(src));
+	dst->height = cpu_to_le32(drm_rect_height(src));
 }
 
 void virtio_gpu_ctrl_ack(struct virtqueue *vq)
@@ -703,6 +714,56 @@ void virtio_gpu_cmd_set_scanout(struct virtio_gpu_device *vgdev,
 	cmd_p->r.height = cpu_to_le32(height);
 	cmd_p->r.x = cpu_to_le32(x);
 	cmd_p->r.y = cpu_to_le32(y);
+
+	virtio_gpu_queue_ctrl_buffer(vgdev, vbuf);
+}
+
+void virtio_gpu_cmd_set_scanout_stereo(struct virtio_gpu_device *vgdev,
+				       uint32_t scanout_id,
+				       const struct drm_display_mode *mode)
+{
+	struct virtio_gpu_set_scanout_stereo *cmd_p;
+	struct virtio_gpu_vbuffer *vbuf;
+	struct drm_rect left, right;
+
+	/*
+	 * Where each view sits in the frame of a stereo mode, as
+	 * drm_mode_set_crtcinfo() times it (the HDMI 1.4b 3D structures).
+	 */
+	left = DRM_RECT_INIT(0, 0, mode->hdisplay, mode->vdisplay);
+	right = left;
+	switch (mode->flags & DRM_MODE_FLAG_3D_MASK) {
+	case DRM_MODE_FLAG_3D_FRAME_PACKING:
+		drm_rect_translate(&right, 0, mode->vtotal);
+		break;
+	case DRM_MODE_FLAG_3D_SIDE_BY_SIDE_FULL:
+		drm_rect_translate(&right, mode->hdisplay, 0);
+		break;
+	case DRM_MODE_FLAG_3D_TOP_AND_BOTTOM:
+		left.y2 = mode->vdisplay / 2;
+		right.y1 = left.y2;
+		break;
+	case DRM_MODE_FLAG_3D_SIDE_BY_SIDE_HALF:
+		left.x2 = mode->hdisplay / 2;
+		right.x1 = left.x2;
+		break;
+	default:
+		/* 2D, or views that are not rectangles of the frame */
+		left = DRM_RECT_INIT(0, 0, 0, 0);
+		right = left;
+		break;
+	}
+
+	cmd_p = virtio_gpu_alloc_cmd(vgdev, &vbuf, sizeof(*cmd_p));
+	memset(cmd_p, 0, sizeof(*cmd_p));
+
+	cmd_p->hdr.type = cpu_to_le32(VIRTIO_GPU_CMD_SET_SCANOUT_STEREO);
+	cmd_p->scanout_id = cpu_to_le32(scanout_id);
+	cmd_p->layout = cpu_to_le32((mode->flags & DRM_MODE_FLAG_3D_MASK) >> 14);
+	cmd_p->view_width = cpu_to_le32(mode->hdisplay);
+	cmd_p->view_height = cpu_to_le32(mode->vdisplay);
+	convert_to_hw_rect(&cmd_p->left, &left);
+	convert_to_hw_rect(&cmd_p->right, &right);
 
 	virtio_gpu_queue_ctrl_buffer(vgdev, vbuf);
 }

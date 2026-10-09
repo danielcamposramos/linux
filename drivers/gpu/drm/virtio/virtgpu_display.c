@@ -97,6 +97,9 @@ static void virtio_gpu_crtc_mode_set_nofb(struct drm_crtc *crtc)
 	virtio_gpu_cmd_set_scanout(vgdev, output->index, 0,
 				   crtc->mode.hdisplay,
 				   crtc->mode.vdisplay, 0, 0);
+	if (vgdev->has_stereo)
+		virtio_gpu_cmd_set_scanout_stereo(vgdev, output->index,
+						  &crtc->state->mode);
 	virtio_gpu_notify(vgdev);
 }
 
@@ -307,6 +310,7 @@ static int vgdev_output_init(struct virtio_gpu_device *vgdev, int index)
 	drm_connector_init(dev, connector, &virtio_gpu_connector_funcs,
 			   DRM_MODE_CONNECTOR_VIRTUAL);
 	drm_connector_helper_add(connector, &virtio_gpu_conn_helper_funcs);
+	connector->stereo_allowed = vgdev->has_stereo;
 	if (vgdev->has_edid)
 		drm_connector_attach_edid_property(connector);
 
