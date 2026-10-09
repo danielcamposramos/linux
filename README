@@ -24,7 +24,9 @@ How its nouveau differs
 -----------------------
 
 The nouveau in this tree is nouveau as its developers ship it, together with
-work on its way upstream, each change with its authors' credit:
+work on its way upstream, each change with its authors' credit. Its HDMI 3D
+output itself dates from 2017: Alastair Bridgewater's series, commit
+0f18d2765ab1, reviewed on the list by Ilia Mirkin. Carried here:
 
 * Mohamed Ahmed's display series: armed head state readback, output scaling,
   GB20x tile and phywin ownership, IMP mode validation and usage bounds
